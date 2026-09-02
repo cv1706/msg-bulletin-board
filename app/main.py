@@ -90,14 +90,31 @@ async def simulate_message(payload: SimulationPayload):
     return {
         "status": "ignored",
         "captured": False,
-        "note": "此訊息為一般對話，未觸發 @個人 或 宣導事項 規則"
+        "note": "此訊息為一般對話，未觸發 @個人、@團隊 或 宣導事項 規則"
     }
 
 # ----------------- 訊息管理 API -----------------
 
 @app.get("/api/messages")
-def list_messages(category: Optional[str] = None, platform: Optional[str] = None, is_resolved: Optional[bool] = None):
-    return get_messages(category=category, platform=platform, is_resolved=is_resolved)
+def list_messages(
+    category: Optional[str] = None,
+    platform: Optional[str] = None,
+    is_resolved: Optional[bool] = None,
+    days: Optional[int] = None
+):
+    """取得訊息列表，支援天數過濾 (例如 days=3)"""
+    return get_messages(category=category, platform=platform, is_resolved=is_resolved, days=days)
+
+@app.post("/api/messages/sync")
+def sync_local_messages(local_messages: List[Dict[str, Any]]):
+    """客戶端本地快照與伺服器資料庫雙向同步 (防止無狀態雲端容器重啟丟失資料)"""
+    for item in local_messages:
+        try:
+            msg = BulletinMessage(**item)
+            save_message(msg)
+        except Exception:
+            pass
+    return {"status": "synced", "count": len(local_messages)}
 
 @app.patch("/api/messages/{msg_id}")
 async def patch_message(
@@ -133,14 +150,18 @@ async def clear_messages():
 @app.get("/api/stats")
 def get_stats():
     all_msgs = get_messages()
-    mention_count = sum(1 for m in all_msgs if m["category"] == MessageCategory.MENTION_ME.value)
-    unresolved_mentions = sum(1 for m in all_msgs if m["category"] == MessageCategory.MENTION_ME.value and not m["is_resolved"])
+    my_mentions = sum(1 for m in all_msgs if m["category"] == MessageCategory.MENTION_ME.value)
+    unresolved_my_mentions = sum(1 for m in all_msgs if m["category"] == MessageCategory.MENTION_ME.value and not m["is_resolved"])
+    team_mentions = sum(1 for m in all_msgs if m["category"] == MessageCategory.MENTION_TEAM.value)
+    unresolved_team = sum(1 for m in all_msgs if m["category"] == MessageCategory.MENTION_TEAM.value and not m["is_resolved"])
     announcement_count = sum(1 for m in all_msgs if m["category"] == MessageCategory.ANNOUNCEMENT.value)
     
     return {
         "total": len(all_msgs),
-        "mentions": mention_count,
-        "unresolved_mentions": unresolved_mentions,
+        "my_mentions": my_mentions,
+        "unresolved_my_mentions": unresolved_my_mentions,
+        "team_mentions": team_mentions,
+        "unresolved_team": unresolved_team,
         "announcements": announcement_count
     }
 

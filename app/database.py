@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import os
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from app.models import BulletinMessage, PlatformType, MessageCategory, PriorityLevel
 
@@ -32,7 +33,6 @@ def init_db():
         raw_payload TEXT
     )
     """)
-    # 自動補欄位（若已存在舊 DB）
     cursor.execute("PRAGMA table_info(messages)")
     columns = [col[1] for col in cursor.fetchall()]
     if "target_users" not in columns:
@@ -69,7 +69,7 @@ def save_message(msg: BulletinMessage):
     conn.commit()
     conn.close()
 
-def get_messages(category: Optional[str] = None, platform: Optional[str] = None, is_resolved: Optional[bool] = None) -> List[Dict[str, Any]]:
+def get_messages(category: Optional[str] = None, platform: Optional[str] = None, is_resolved: Optional[bool] = None, days: Optional[int] = None) -> List[Dict[str, Any]]:
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -86,7 +86,14 @@ def get_messages(category: Optional[str] = None, platform: Optional[str] = None,
         query += " AND is_resolved = ?"
         params.append(1 if is_resolved else 0)
         
-    query += " ORDER BY is_pinned DESC, created_at DESC LIMIT 300"
+    # 時間範圍過濾 (例如 3 天內)
+    if days and days > 0:
+        cutoff_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        # 置頂訊息 (is_pinned = 1) 不受天數限制，非置頂訊息才受天數過濾
+        query += " AND (is_pinned = 1 OR created_at >= ?)"
+        params.append(cutoff_date)
+        
+    query += " ORDER BY is_pinned DESC, created_at DESC LIMIT 500"
     
     cursor.execute(query, params)
     rows = cursor.fetchall()

@@ -21,7 +21,7 @@
         </div>
         <div class="brand-text">
           <h1>智慧通訊網頁佈告欄</h1>
-          <span class="sub-title">LINE & Google Chat 即時篩選分流系統（支援個人 / 全團隊雙模式）</span>
+          <span class="sub-title">LINE & Google Chat 即時篩選分流系統（持久化固定顯示）</span>
         </div>
       </div>
 
@@ -64,8 +64,15 @@
       </div>
 
       <div class="filter-options">
+        <select id="time-filter" class="custom-select">
+          <option value="3" selected>🕒 最近 3 天</option>
+          <option value="7">🕒 最近 7 天</option>
+          <option value="30">🕒 最近 30 天</option>
+          <option value="0">🕒 全部歷史訊息</option>
+        </select>
+
         <select id="platform-filter" class="custom-select">
-          <option value="ALL">全部平台 (LINE & Google Chat)</option>
+          <option value="ALL">全部平台</option>
           <option value="LINE">僅看 LINE</option>
           <option value="GOOGLE_CHAT">僅看 Google Chat</option>
         </select>

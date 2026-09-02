@@ -1,4 +1,6 @@
-// 智慧通訊佈告欄前端邏輯 (支援個人 / 全團隊雙模式)
+// 智慧通訊佈告欄前端邏輯 (支援個人 / 全團隊雙模式 + 本地持久化快取)
+
+const STORAGE_KEY = 'bulletin_local_messages_v1';
 
 let allMessages = [];
 let ws = null;
@@ -22,6 +24,7 @@ const tabMyMentions = document.getElementById('tab-my-mentions');
 const tabTeamMentions = document.getElementById('tab-team-mentions');
 
 const searchInput = document.getElementById('search-input');
+const timeFilter = document.getElementById('time-filter');
 const platformFilter = document.getElementById('platform-filter');
 const unresolvedOnly = document.getElementById('unresolved-only');
 const btnRefresh = document.getElementById('btn-refresh');
@@ -38,6 +41,24 @@ const btnOpenSettings = document.getElementById('btn-open-settings');
 const btnCloseSettings = document.getElementById('btn-close-settings');
 const btnCancelSettings = document.getElementById('btn-cancel-settings');
 const btnSaveSettings = document.getElementById('btn-save-settings');
+
+// 本地快取操作
+function saveToLocalStorage(msgs) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(msgs));
+  } catch (e) {
+    console.warn("Save local storage failed:", e);
+  }
+}
+
+function loadFromLocalStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
 
 // 音效播放 (Web Audio API)
 function playNotificationSound(isUrgent = false) {
@@ -100,34 +121,72 @@ function initWebSocket() {
 function handleWebSocketMessage(payload) {
   const { type, data } = payload;
   if (type === 'NEW_MESSAGE') {
-    allMessages.unshift(data);
-    renderMessages();
-    playNotificationSound(data.priority === 'URGENT');
+    // 檢查是否已存在
+    if (!allMessages.some(m => m.id === data.id)) {
+      allMessages.unshift(data);
+      saveToLocalStorage(allMessages);
+      renderMessages();
+      playNotificationSound(data.priority === 'URGENT');
+    }
   } else if (type === 'UPDATE_MESSAGE') {
     const idx = allMessages.findIndex(m => m.id === data.id);
     if (idx !== -1) {
       if (data.is_read !== null && data.is_read !== undefined) allMessages[idx].is_read = data.is_read;
       if (data.is_resolved !== null && data.is_resolved !== undefined) allMessages[idx].is_resolved = data.is_resolved;
       if (data.is_pinned !== null && data.is_pinned !== undefined) allMessages[idx].is_pinned = data.is_pinned;
+      saveToLocalStorage(allMessages);
       renderMessages();
     }
   } else if (type === 'DELETE_MESSAGE') {
     allMessages = allMessages.filter(m => m.id !== data.id);
+    saveToLocalStorage(allMessages);
     renderMessages();
   } else if (type === 'CLEAR_MESSAGES') {
     allMessages = [];
+    saveToLocalStorage(allMessages);
     renderMessages();
   }
 }
 
-// 載入訊息
+// 載入訊息 (含伺服器與本地雙向同步)
 async function fetchMessages() {
+  const selectedDays = timeFilter ? parseInt(timeFilter.value, 10) : 3;
+  const daysParam = selectedDays > 0 ? `?days=${selectedDays}` : '';
+
   try {
-    const res = await fetch('/api/messages');
-    allMessages = await res.json();
+    const res = await fetch(`/api/messages${daysParam}`);
+    const serverMessages = await res.json();
+
+    // 合併伺服器資料與本地快取
+    const localMsgs = loadFromLocalStorage();
+    const msgMap = new Map();
+
+    // 先存入本地快取
+    localMsgs.forEach(m => msgMap.set(m.id, m));
+    // 用伺服器最新資料覆蓋或新增
+    serverMessages.forEach(m => msgMap.set(m.id, m));
+
+    allMessages = Array.from(msgMap.values());
+    allMessages.sort((a, b) => {
+      if (a.is_pinned !== b.is_pinned) return b.is_pinned ? 1 : -1;
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
+
+    saveToLocalStorage(allMessages);
     renderMessages();
+
+    // 若伺服器剛重啟為空，自動將本地有效資料同步回伺服器
+    if (serverMessages.length === 0 && localMsgs.length > 0) {
+      fetch('/api/messages/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(localMsgs)
+      });
+    }
   } catch (err) {
-    console.error("Fetch messages failed:", err);
+    console.warn("Fetch from server failed, using local storage:", err);
+    allMessages = loadFromLocalStorage();
+    renderMessages();
   }
 }
 
@@ -149,8 +208,18 @@ function renderMessages() {
   const query = searchInput.value.toLowerCase().trim();
   const platform = platformFilter.value;
   const hideResolved = unresolvedOnly.checked;
+  const selectedDays = timeFilter ? parseInt(timeFilter.value, 10) : 3;
+
+  const now = new Date();
 
   const filtered = allMessages.filter(m => {
+    // 時間過濾 (非置頂訊息且選擇特定天數時)
+    if (selectedDays > 0 && !m.is_pinned) {
+      const msgDate = new Date(m.created_at);
+      const diffDays = (now - msgDate) / (1000 * 60 * 60 * 24);
+      if (diffDays > selectedDays) return false;
+    }
+
     if (platform !== 'ALL' && m.platform !== platform) return false;
     if (hideResolved && m.is_resolved) return false;
     if (query) {
@@ -166,9 +235,9 @@ function renderMessages() {
   const announcements = filtered.filter(m => m.category === 'ANNOUNCEMENT');
 
   // 計算頂部徽章總數
-  const totalMyUnresolved = allMessages.filter(m => m.category === 'MENTION_ME' && !m.is_resolved).length;
-  const totalTeamUnresolved = allMessages.filter(m => m.category === 'MENTION_TEAM' && !m.is_resolved).length;
-  const totalAnnouncements = allMessages.filter(m => m.category === 'ANNOUNCEMENT').length;
+  const totalMyUnresolved = filtered.filter(m => m.category === 'MENTION_ME' && !m.is_resolved).length;
+  const totalTeamUnresolved = filtered.filter(m => m.category === 'MENTION_TEAM' && !m.is_resolved).length;
+  const totalAnnouncements = announcements.length;
 
   badgeMentions.textContent = totalMyUnresolved;
   badgeTeam.textContent = totalTeamUnresolved;
@@ -232,7 +301,7 @@ function renderColumn(container, list, isMentionCol, isTeamView) {
             ${priorityBadge}
             ${targetBadges}
           </div>
-          <span class="time-tag">${msg.created_at.slice(11, 16)}</span>
+          <span class="time-tag">${msg.created_at.slice(5, 16)}</span>
         </div>
 
         <div class="meta-info">
@@ -264,6 +333,12 @@ function renderColumn(container, list, isMentionCol, isTeamView) {
 
 // 狀態操作
 async function toggleResolved(id, status) {
+  const idx = allMessages.findIndex(m => m.id === id);
+  if (idx !== -1) {
+    allMessages[idx].is_resolved = status;
+    saveToLocalStorage(allMessages);
+    renderMessages();
+  }
   await fetch(`/api/messages/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -272,6 +347,12 @@ async function toggleResolved(id, status) {
 }
 
 async function togglePinned(id, status) {
+  const idx = allMessages.findIndex(m => m.id === id);
+  if (idx !== -1) {
+    allMessages[idx].is_pinned = status;
+    saveToLocalStorage(allMessages);
+    renderMessages();
+  }
   await fetch(`/api/messages/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -280,6 +361,9 @@ async function togglePinned(id, status) {
 }
 
 async function deleteMessage(id) {
+  allMessages = allMessages.filter(m => m.id !== id);
+  saveToLocalStorage(allMessages);
+  renderMessages();
   await fetch(`/api/messages/${id}`, { method: 'DELETE' });
 }
 
@@ -409,6 +493,7 @@ btnCancelSettings.onclick = () => settingsModal.classList.remove('active');
 
 // 事件監聽
 searchInput.oninput = renderMessages;
+if (timeFilter) timeFilter.onchange = fetchMessages;
 platformFilter.onchange = renderMessages;
 unresolvedOnly.onchange = renderMessages;
 btnRefresh.onclick = fetchMessages;
@@ -420,6 +505,12 @@ function escapeHtml(str) {
 
 // 頁面初次載入
 window.onload = () => {
+  // 先載入本地快取快速呈現
+  allMessages = loadFromLocalStorage();
+  if (allMessages.length > 0) {
+    renderMessages();
+  }
+  // 抓取伺服器最新資料並初始化 WebSocket
   fetchMessages();
   initWebSocket();
 };
