@@ -1,28 +1,23 @@
 @echo off
 chcp 65001 >nul
 echo ========================================================
-echo   一鍵推送到 GitHub 儲存庫
+echo   推送到 GitHub 儲存庫 (cv1706/msg-bulletin-board)
 echo ========================================================
 echo.
 
-set /p REPO_URL="請貼上你的 GitHub Repository 網址 (例如 https://github.com/your-name/msg-bulletin-board.git): "
+set REPO_URL=https://github.com/cv1706/msg-bulletin-board.git
 
-if "%REPO_URL%"=="" (
-    echo 網址不可為空！
-    pause
-    exit /b
-)
+echo [1/3] 加入所有變更...
+git add .
 
-echo.
-echo [1/2] 設定遠端儲存庫 origin...
-git remote remove origin 2>nul
-git remote add origin %REPO_URL%
+echo [2/3] 提交變更 (若有)...
+git commit -m "update: sync changes" 2>nul
 
-echo [2/2] 推送程式碼至 main 分支...
+echo [3/3] 推送程式碼至 main 分支...
 git push -u origin main
 
 echo.
 echo ========================================================
-echo   推送完成！請前往 Render.com 連接此 Repository 進行部署
+echo   推送完成！
 echo ========================================================
 pause
