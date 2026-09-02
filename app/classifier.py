@@ -31,13 +31,22 @@ def save_config(cfg: Dict[str, Any]):
 
 class MessageClassifier:
     @staticmethod
-    def classify_text(text: str, mentions: Optional[List[str]] = None, sender: str = "", channel: str = "", platform: PlatformType = PlatformType.SIMULATION) -> Optional[BulletinMessage]:
+    def extract_text_mentions(text: str) -> List[str]:
+        """從文本中抽取所有 @人名 或 ＠人名"""
+        pattern = r"[@＠]([a-zA-Z0-9_\u4e00-\u9fa5\.\-]+)"
+        matches = re.findall(pattern, text)
+        # 過濾掉 @all, @everyone 等公告標籤
+        return [m for m in matches if m.lower() not in ["all", "everyone", "channel", "here"]]
+
+    @classmethod
+    def classify_text(cls, text: str, mentions: Optional[List[str]] = None, sender: str = "", channel: str = "", platform: PlatformType = PlatformType.SIMULATION) -> Optional[BulletinMessage]:
         config = load_config()
         user_profile = config.get("user_profile", {})
-        aliases = [a.lower() for a in user_profile.get("aliases", [])]
-        aliases.append(user_profile.get("name", "").lower())
+        aliases = [a.lower() for a in user_profile.get("aliases", []) if a]
+        if user_profile.get("name"):
+            aliases.append(user_profile.get("name", "").lower())
         line_ids = user_profile.get("line_user_ids", [])
-        google_emails = [e.lower() for e in user_profile.get("google_emails", [])]
+        google_emails = [e.lower() for e in user_profile.get("google_emails", []) if e]
         
         ann_rules = config.get("announcement_rules", {})
         ann_keywords = ann_rules.get("keywords", [])
@@ -45,51 +54,7 @@ class MessageClassifier:
         
         text_lower = text.lower()
         
-        # 1. 優先判斷是否為 @個人訊息
-        is_mention_me = False
-        matched_reason = ""
-        
-        # 檢查傳入的 mentions 標記 (LINE userId 或 Google Email)
-        if mentions:
-            for m in mentions:
-                m_str = str(m).lower()
-                if m in line_ids or any(email in m_str for email in google_emails):
-                    is_mention_me = True
-                    matched_reason = f"系統標記命中個人 ID ({m})"
-                    break
-                    
-        # 若標記未命中，檢查文字中是否包含 @暱稱 或 @使用者名稱
-        if not is_mention_me:
-            for alias in aliases:
-                if not alias:
-                    continue
-                pattern = rf"(@|＠){re.escape(alias)}(\s|$|[,，:：!！]|\b)"
-                if re.search(pattern, text_lower):
-                    is_mention_me = True
-                    matched_reason = f"本文標記命中暱稱 (@{alias})"
-                    break
-                    
-        if is_mention_me:
-            # 計算優先等級
-            priority = PriorityLevel.NORMAL
-            if any(k.lower() in text_lower for k in high_priority_keywords) or "緊急" in text or "儘速" in text or "asap" in text_lower:
-                priority = PriorityLevel.URGENT
-            elif "請於" in text or "截止" in text or "deadline" in text_lower:
-                priority = PriorityLevel.HIGH
-                
-            return BulletinMessage(
-                id=str(uuid.uuid4()),
-                platform=platform,
-                channel_name=channel or "一般群組",
-                sender_name=sender or "同事",
-                content=text.strip(),
-                category=MessageCategory.MENTION_ME,
-                priority=priority,
-                matched_reason=matched_reason,
-                created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            )
-            
-        # 2. 判斷是否為「全域宣導事項 / 公告」
+        # 1. 優先判斷是否為「全域宣導事項 / 公告」
         is_announcement = False
         matched_ann_reason = ""
         
@@ -115,12 +80,71 @@ class MessageClassifier:
                 category=MessageCategory.ANNOUNCEMENT,
                 priority=priority,
                 matched_reason=matched_ann_reason,
+                target_users=["全體同仁"],
                 is_pinned=(priority == PriorityLevel.URGENT),
                 created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             )
-            
-        # 3. 一般訊息或未命中者忽略
-        return None
+
+        # 2. 統整所有被提及的人名/ID
+        all_targets = set()
+        if mentions:
+            for m in mentions:
+                if str(m).lower() not in ["@all", "all", "everyone"]:
+                    all_targets.add(str(m))
+                    
+        # 從文字抽取 @人名
+        text_mentions = cls.extract_text_mentions(text)
+        for tm in text_mentions:
+            all_targets.add(tm)
+
+        if not all_targets:
+            # 無任何 @ 提及，且非公告 -> 視為一般閒聊忽略
+            return None
+
+        # 3. 判斷被提及者中是否包含「我」
+        is_mention_me = False
+        matched_reason = ""
+        
+        for target in all_targets:
+            t_lower = target.lower()
+            if target in line_ids:
+                is_mention_me = True
+                matched_reason = f"命中個人 LINE ID ({target})"
+                break
+            if any(email in t_lower for email in google_emails):
+                is_mention_me = True
+                matched_reason = f"命中個人 Google Email ({target})"
+                break
+            if t_lower in aliases:
+                is_mention_me = True
+                matched_reason = f"命中個人暱稱 (@{target})"
+                break
+
+        # 計算優先等級
+        priority = PriorityLevel.NORMAL
+        if any(k.lower() in text_lower for k in high_priority_keywords) or "緊急" in text or "儘速" in text or "asap" in text_lower:
+            priority = PriorityLevel.URGENT
+        elif "請於" in text or "截止" in text or "deadline" in text_lower:
+            priority = PriorityLevel.HIGH
+
+        if is_mention_me:
+            category = MessageCategory.MENTION_ME
+        else:
+            category = MessageCategory.MENTION_TEAM
+            matched_reason = f"標記團隊成員 ({', '.join(all_targets)})"
+
+        return BulletinMessage(
+            id=str(uuid.uuid4()),
+            platform=platform,
+            channel_name=channel or "一般群組",
+            sender_name=sender or "同事",
+            content=text.strip(),
+            category=category,
+            priority=priority,
+            matched_reason=matched_reason,
+            target_users=list(all_targets),
+            created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        )
 
     @classmethod
     def parse_line_webhook(cls, body: Dict[str, Any]) -> List[BulletinMessage]:
@@ -172,7 +196,6 @@ class MessageClassifier:
     @classmethod
     def parse_google_chat_webhook(cls, body: Dict[str, Any]) -> Optional[BulletinMessage]:
         """解析 Google Chat Webhook / Event 事件"""
-        event_type = body.get("type", "")
         message = body.get("message", {}) if "message" in body else body
         
         text = message.get("text", "") or message.get("formattedText", "")

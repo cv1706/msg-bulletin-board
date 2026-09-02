@@ -21,14 +21,18 @@
         </div>
         <div class="brand-text">
           <h1>智慧通訊網頁佈告欄</h1>
-          <span class="sub-title">LINE & Google Chat 即時篩選分流系統</span>
+          <span class="sub-title">LINE & Google Chat 即時篩選分流系統（支援個人 / 全團隊雙模式）</span>
         </div>
       </div>
 
       <div class="header-stats">
         <div class="stat-pill mention-stat">
-          <span class="stat-label">待處理 @個人：</span>
+          <span class="stat-label">待處理 @我：</span>
           <span class="stat-value" id="badge-mentions">0</span>
+        </div>
+        <div class="stat-pill team-stat">
+          <span class="stat-label">團隊交辦：</span>
+          <span class="stat-value" id="badge-team">0</span>
         </div>
         <div class="stat-pill announcement-stat">
           <span class="stat-label">全域宣導：</span>
@@ -56,7 +60,7 @@
     <div class="filter-bar">
       <div class="search-box">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-        <input type="text" id="search-input" placeholder="搜尋訊息內容、發送者或群組名稱...">
+        <input type="text" id="search-input" placeholder="搜尋交辦內容、被標記者、發送者或群組...">
       </div>
 
       <div class="filter-options">
@@ -79,20 +83,22 @@
 
     <!-- 主內容雙欄區塊 -->
     <main class="dashboard-grid">
-      <!-- 左欄：@個人訊息與交辦 -->
+      <!-- 左欄：交辦專區（支援 @我 / @全團隊 雙頁籤切換） -->
       <section class="board-column column-mentions">
-        <div class="column-header">
-          <div class="column-title">
-            <div class="column-icon mention-color">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7.5" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
-            </div>
-            <h2>📥 @我的訊息與待辦交辦</h2>
+        <div class="column-header-with-tabs">
+          <div class="tab-group">
+            <button class="tab-btn active" id="tab-my-mentions" onclick="switchMentionTab('ME')">
+              📥 @我的交辦 (<span id="count-tab-me">0</span>)
+            </button>
+            <button class="tab-btn" id="tab-team-mentions" onclick="switchMentionTab('TEAM')">
+              👥 全團隊交辦 (<span id="count-tab-team">0</span>)
+            </button>
           </div>
           <span class="column-counter" id="count-mentions">0 則</span>
         </div>
         
         <div class="message-list" id="list-mentions">
-          <div class="empty-state">目前無待處理的 @個人 訊息</div>
+          <div class="empty-state">目前無待處理訊息</div>
         </div>
       </section>
 
@@ -123,7 +129,7 @@
         <button class="modal-close" id="btn-close-simulate">&times;</button>
       </div>
       <div class="modal-body">
-        <p class="modal-hint">可在此模擬發送 LINE 或 Google Chat 訊息，驗證系統之分流與篩選判斷。</p>
+        <p class="modal-hint">可在此模擬發送 LINE 或 Google Chat 訊息，驗證「@我」、「@團隊其他同事」與「宣導公告」的分流效果。</p>
         
         <div class="form-group">
           <label>通訊平台</label>
@@ -152,15 +158,16 @@
 
         <div class="form-group">
           <label>訊息內容</label>
-          <textarea id="sim-content" class="form-textarea" rows="3">@Alex 請確認今日下午 16:30 之架構審查會議，並儘速回覆進度！</textarea>
+          <textarea id="sim-content" class="form-textarea" rows="3">@Alex 請於今日下班前確認 API 規格書與佈告欄原型驗證！</textarea>
         </div>
 
         <div class="quick-templates">
           <span class="template-label">快速套用範例：</span>
-          <button type="button" class="badge-btn" onclick="applyTemplate(1)">@個人緊急交辦</button>
-          <button type="button" class="badge-btn" onclick="applyTemplate(2)">【公告】全體系統維護</button>
+          <button type="button" class="badge-btn" onclick="applyTemplate(1)">@我 (個人交辦)</button>
+          <button type="button" class="badge-btn" onclick="applyTemplate(5)">@其他同事 (團隊交辦)</button>
+          <button type="button" class="badge-btn" onclick="applyTemplate(2)">【公告】系統維護</button>
           <button type="button" class="badge-btn" onclick="applyTemplate(3)">@all 宣導事項</button>
-          <button type="button" class="badge-btn" onclick="applyTemplate(4)">一般群組閒聊 (應被忽略)</button>
+          <button type="button" class="badge-btn" onclick="applyTemplate(4)">一般群組閒聊</button>
         </div>
 
         <div id="sim-result" class="sim-result-box" style="display:none;"></div>
@@ -181,42 +188,29 @@
       </div>
       <div class="modal-body">
         <div class="form-group">
-          <label>個人主要顯示名稱</label>
+          <label>個人主要顯示名稱 (當訊息中包含 @此名稱 即歸類為「@我的交辦」)</label>
           <input type="text" id="cfg-name" class="form-input" placeholder="例如：Alex">
         </div>
 
         <div class="form-group">
           <label>個人暱稱 / 標記別名 (以逗號分隔)</label>
           <input type="text" id="cfg-aliases" class="form-input" placeholder="例如：Alex, 王大明, 大明, alex.wang">
-          <span class="form-hint">當訊息內包含 @別名 時，系統將自動擷取為 @個人 訊息</span>
+          <span class="form-hint">訊息內 @上述任一別名 會進入「@我的交辦」；@其他名字 則進入「全團隊交辦」</span>
         </div>
 
         <div class="form-group">
           <label>LINE User ID 清單 (以逗號分隔)</label>
           <input type="text" id="cfg-line-ids" class="form-input" placeholder="例如：U1234567890abcdef...">
-          <span class="form-hint">LINE Webhook 系統精確比對之 User ID</span>
         </div>
 
         <div class="form-group">
           <label>Google Chat Email 清單 (以逗號分隔)</label>
           <input type="text" id="cfg-google-emails" class="form-input" placeholder="例如：alex.wang@company.com">
-          <span class="form-hint">Google Chat UserMention 標記比對之 Email</span>
         </div>
 
         <div class="form-group">
           <label>全域宣導關鍵字 (以逗號分隔)</label>
           <textarea id="cfg-ann-keywords" class="form-textarea" rows="2"></textarea>
-          <span class="form-hint">訊息內包含任一關鍵字時將自動歸類至「全域宣導事項」</span>
-        </div>
-
-        <div class="form-group webhook-urls">
-          <label>Webhook 接收網址指南</label>
-          <div class="code-copy-row">
-            <span>LINE: <code>POST /api/webhook/line</code></span>
-          </div>
-          <div class="code-copy-row">
-            <span>Google Chat: <code>POST /api/webhook/google-chat</code></span>
-          </div>
         </div>
       </div>
       <div class="modal-footer">

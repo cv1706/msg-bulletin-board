@@ -1,18 +1,25 @@
-// 智慧通訊佈告欄前端邏輯
+// 智慧通訊佈告欄前端邏輯 (支援個人 / 全團隊雙模式)
 
 let allMessages = [];
 let ws = null;
 let currentConfig = null;
+let currentMentionTab = 'ME'; // 'ME' 或 'TEAM'
 
 // DOM 元素快取
 const listMentions = document.getElementById('list-mentions');
 const listAnnouncements = document.getElementById('list-announcements');
 const countMentions = document.getElementById('count-mentions');
 const countAnnouncements = document.getElementById('count-announcements');
+const countTabMe = document.getElementById('count-tab-me');
+const countTabTeam = document.getElementById('count-tab-team');
 const badgeMentions = document.getElementById('badge-mentions');
+const badgeTeam = document.getElementById('badge-team');
 const badgeAnnouncements = document.getElementById('badge-announcements');
 const wsIndicator = document.getElementById('ws-indicator');
 const wsStatusText = document.getElementById('ws-status-text');
+
+const tabMyMentions = document.getElementById('tab-my-mentions');
+const tabTeamMentions = document.getElementById('tab-team-mentions');
 
 const searchInput = document.getElementById('search-input');
 const platformFilter = document.getElementById('platform-filter');
@@ -32,7 +39,7 @@ const btnCloseSettings = document.getElementById('btn-close-settings');
 const btnCancelSettings = document.getElementById('btn-cancel-settings');
 const btnSaveSettings = document.getElementById('btn-save-settings');
 
-// 音效播放 (使用 Web Audio API，無需外加音檔)
+// 音效播放 (Web Audio API)
 function playNotificationSound(isUrgent = false) {
   try {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -54,7 +61,7 @@ function playNotificationSound(isUrgent = false) {
     osc.start();
     osc.stop(ctx.currentTime + 0.3);
   } catch (e) {
-    console.warn("Audio play blocked by browser policy:", e);
+    console.warn("Audio play blocked:", e);
   }
 }
 
@@ -124,6 +131,19 @@ async function fetchMessages() {
   }
 }
 
+// 切換交辦頁籤
+function switchMentionTab(tab) {
+  currentMentionTab = tab;
+  if (tab === 'ME') {
+    tabMyMentions.classList.add('active');
+    tabTeamMentions.classList.remove('active');
+  } else {
+    tabTeamMentions.classList.add('active');
+    tabMyMentions.classList.remove('active');
+  }
+  renderMessages();
+}
+
 // 渲染訊息列表
 function renderMessages() {
   const query = searchInput.value.toLowerCase().trim();
@@ -134,30 +154,45 @@ function renderMessages() {
     if (platform !== 'ALL' && m.platform !== platform) return false;
     if (hideResolved && m.is_resolved) return false;
     if (query) {
-      const matchText = (m.content + m.sender_name + m.channel_name).toLowerCase();
+      const targetStr = (m.target_users || []).join(' ');
+      const matchText = (m.content + m.sender_name + m.channel_name + targetStr).toLowerCase();
       if (!matchText.includes(query)) return false;
     }
     return true;
   });
 
-  const mentions = filtered.filter(m => m.category === 'MENTION_ME');
+  const myMentions = filtered.filter(m => m.category === 'MENTION_ME');
+  const teamMentions = filtered.filter(m => m.category === 'MENTION_TEAM' || m.category === 'MENTION_ME');
   const announcements = filtered.filter(m => m.category === 'ANNOUNCEMENT');
 
-  // 更新計數
-  countMentions.textContent = `${mentions.length} 則`;
+  // 計算頂部徽章總數
+  const totalMyUnresolved = allMessages.filter(m => m.category === 'MENTION_ME' && !m.is_resolved).length;
+  const totalTeamUnresolved = allMessages.filter(m => m.category === 'MENTION_TEAM' && !m.is_resolved).length;
+  const totalAnnouncements = allMessages.filter(m => m.category === 'ANNOUNCEMENT').length;
+
+  badgeMentions.textContent = totalMyUnresolved;
+  badgeTeam.textContent = totalTeamUnresolved;
+  badgeAnnouncements.textContent = totalAnnouncements;
+
+  countTabMe.textContent = myMentions.length;
+  countTabTeam.textContent = teamMentions.length;
   countAnnouncements.textContent = `${announcements.length} 則`;
 
-  const totalUnresolved = allMessages.filter(m => m.category === 'MENTION_ME' && !m.is_resolved).length;
-  badgeMentions.textContent = totalUnresolved;
-  badgeAnnouncements.textContent = allMessages.filter(m => m.category === 'ANNOUNCEMENT').length;
+  // 依當前 Tab 渲染左欄
+  if (currentMentionTab === 'ME') {
+    countMentions.textContent = `${myMentions.length} 則`;
+    renderColumn(listMentions, myMentions, true, false);
+  } else {
+    countMentions.textContent = `${teamMentions.length} 則`;
+    renderColumn(listMentions, teamMentions, true, true);
+  }
 
-  renderColumn(listMentions, mentions, true);
-  renderColumn(listAnnouncements, announcements, false);
+  renderColumn(listAnnouncements, announcements, false, false);
 }
 
-function renderColumn(container, list, isMentionCol) {
+function renderColumn(container, list, isMentionCol, isTeamView) {
   if (list.length === 0) {
-    container.innerHTML = `<div class="empty-state">${isMentionCol ? '目前無符合條件的 @個人 訊息' : '目前無符合條件的宣導或公告事項'}</div>`;
+    container.innerHTML = `<div class="empty-state">${isMentionCol ? (isTeamView ? '目前無團隊成員交辦訊息' : '目前無屬於您的 @個人 訊息') : '目前無符合條件的宣導或公告事項'}</div>`;
     return;
   }
 
@@ -176,6 +211,12 @@ function renderColumn(container, list, isMentionCol) {
       priorityBadge = `<span class="priority-badge p-normal">一般</span>`;
     }
 
+    // 目標被標記者標籤
+    let targetBadges = '';
+    if (msg.target_users && msg.target_users.length > 0) {
+      targetBadges = msg.target_users.map(u => `<span class="target-user-badge">@${escapeHtml(u)}</span>`).join(' ');
+    }
+
     const cardClasses = [
       'msg-card',
       msg.is_resolved ? 'resolved' : '',
@@ -186,9 +227,10 @@ function renderColumn(container, list, isMentionCol) {
     return `
       <div class="${cardClasses}" data-id="${msg.id}">
         <div class="card-top">
-          <div style="display:flex; align-items:center; gap:6px;">
+          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
             <span class="platform-badge ${platformClass}">${platformName}</span>
             ${priorityBadge}
+            ${targetBadges}
           </div>
           <span class="time-tag">${msg.created_at.slice(11, 16)}</span>
         </div>
@@ -251,6 +293,10 @@ function applyTemplate(type) {
     channel.value = "半導體架構技術交流群";
     sender.value = "系統架構師 Kevin";
     content.value = "@Alex 請於今日下班前確認 API 規格書與佈告欄原型驗證，謝謝！";
+  } else if (type === 5) {
+    channel.value = "後端開發小組";
+    sender.value = "產品經理 Sarah";
+    content.value = "@David @Jessica 請儘速排查訂單模組的效能瓶頸問題！";
   } else if (type === 2) {
     channel.value = "全體員工公告頻道";
     sender.value = "資訊處維運組";
@@ -289,7 +335,8 @@ btnSendSimulate.onclick = async () => {
     resultBox.style.display = 'block';
     if (data.captured) {
       resultBox.style.borderLeftColor = '#22c55e';
-      resultBox.innerHTML = `✅ <strong>成功擷取並分流！</strong> 分類：<code>${data.message.category}</code> (${data.message.matched_reason})`;
+      const catName = data.message.category === 'MENTION_ME' ? '📥 @我的交辦' : (data.message.category === 'MENTION_TEAM' ? '👥 全團隊交辦' : '📢 全域宣導');
+      resultBox.innerHTML = `✅ <strong>成功擷取並分流！</strong> 分類：<code>${catName}</code> (${data.message.matched_reason})`;
     } else {
       resultBox.style.borderLeftColor = '#eab308';
       resultBox.innerHTML = `⚠️ <strong>未觸發規則：</strong> ${data.note}`;

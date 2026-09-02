@@ -24,6 +24,7 @@ def init_db():
         category TEXT NOT NULL,
         priority TEXT NOT NULL,
         matched_reason TEXT,
+        target_users TEXT,
         is_read INTEGER DEFAULT 0,
         is_resolved INTEGER DEFAULT 0,
         is_pinned INTEGER DEFAULT 0,
@@ -31,6 +32,12 @@ def init_db():
         raw_payload TEXT
     )
     """)
+    # 自動補欄位（若已存在舊 DB）
+    cursor.execute("PRAGMA table_info(messages)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if "target_users" not in columns:
+        cursor.execute("ALTER TABLE messages ADD COLUMN target_users TEXT")
+        
     conn.commit()
     conn.close()
 
@@ -40,9 +47,9 @@ def save_message(msg: BulletinMessage):
     cursor.execute("""
     INSERT OR REPLACE INTO messages (
         id, platform, channel_name, sender_name, content,
-        category, priority, matched_reason, is_read, is_resolved,
+        category, priority, matched_reason, target_users, is_read, is_resolved,
         is_pinned, created_at, raw_payload
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         msg.id,
         msg.platform.value,
@@ -52,6 +59,7 @@ def save_message(msg: BulletinMessage):
         msg.category.value,
         msg.priority.value,
         msg.matched_reason,
+        json.dumps(msg.target_users, ensure_ascii=False),
         1 if msg.is_read else 0,
         1 if msg.is_resolved else 0,
         1 if msg.is_pinned else 0,
@@ -78,13 +86,20 @@ def get_messages(category: Optional[str] = None, platform: Optional[str] = None,
         query += " AND is_resolved = ?"
         params.append(1 if is_resolved else 0)
         
-    query += " ORDER BY is_pinned DESC, created_at DESC LIMIT 200"
+    query += " ORDER BY is_pinned DESC, created_at DESC LIMIT 300"
     
     cursor.execute(query, params)
     rows = cursor.fetchall()
     
     results = []
     for r in rows:
+        target_users = []
+        if "target_users" in r.keys() and r["target_users"]:
+            try:
+                target_users = json.loads(r["target_users"])
+            except Exception:
+                target_users = []
+                
         results.append({
             "id": r["id"],
             "platform": r["platform"],
@@ -94,6 +109,7 @@ def get_messages(category: Optional[str] = None, platform: Optional[str] = None,
             "category": r["category"],
             "priority": r["priority"],
             "matched_reason": r["matched_reason"],
+            "target_users": target_users,
             "is_read": bool(r["is_read"]),
             "is_resolved": bool(r["is_resolved"]),
             "is_pinned": bool(r["is_pinned"]),

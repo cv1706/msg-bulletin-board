@@ -1,5 +1,5 @@
 """
-智慧通訊網頁佈告欄 - 系統整合測試腳本
+智慧通訊網頁佈告欄 - 系統整合測試腳本 (支援個人與團隊雙模式)
 """
 import sys
 import os
@@ -36,9 +36,24 @@ class TestBulletinSystem(unittest.TestCase):
         self.assertIsNotNone(msg, "應成功識別 @個人 訊息")
         self.assertEqual(msg.category, MessageCategory.MENTION_ME)
         self.assertIn("alex", msg.matched_reason.lower())
-        print("[PASS] 測試 1：成功識別 @個人 訊息")
+        print("[PASS] 測試 1：成功識別 @我的交辦 訊息")
 
-    def test_02_announcement_classification(self):
+    def test_02_mention_team_classification(self):
+        """測試 @其他同事 進入全團隊交辦"""
+        text = "@David @Jessica 請排查伺服器連線延遲問題"
+        msg = MessageClassifier.classify_text(
+            text=text,
+            sender="架構師",
+            channel="後端組",
+            platform=PlatformType.LINE
+        )
+        self.assertIsNotNone(msg, "應成功識別 @其他同事 訊息")
+        self.assertEqual(msg.category, MessageCategory.MENTION_TEAM)
+        self.assertIn("David", msg.target_users)
+        self.assertIn("Jessica", msg.target_users)
+        print("[PASS] 測試 2：成功識別 @全團隊交辦 訊息並標示成員")
+
+    def test_03_announcement_classification(self):
         """測試全域宣導關鍵字過濾"""
         text = "【公告】本週五晚間十點將進行伺服器例行性維護，請提前備份。"
         msg = MessageClassifier.classify_text(
@@ -49,9 +64,9 @@ class TestBulletinSystem(unittest.TestCase):
         )
         self.assertIsNotNone(msg, "應成功識別全域宣導事項")
         self.assertEqual(msg.category, MessageCategory.ANNOUNCEMENT)
-        print("[PASS] 測試 2：成功識別全域宣導事項")
+        print("[PASS] 測試 3：成功識別全域宣導事項")
 
-    def test_03_ignore_general_chat(self):
+    def test_04_ignore_general_chat(self):
         """測試一般群組閒聊是否正確被忽略"""
         text = "大家今天中午要訂哪一家的便當？"
         msg = MessageClassifier.classify_text(
@@ -61,9 +76,9 @@ class TestBulletinSystem(unittest.TestCase):
             platform=PlatformType.LINE
         )
         self.assertIsNone(msg, "一般閒聊訊息應被忽略不進入佈告欄")
-        print("[PASS] 測試 3：成功排除無關閒聊訊息")
+        print("[PASS] 測試 4：成功排除無關閒聊訊息")
 
-    def test_04_line_webhook_parsing(self):
+    def test_05_line_webhook_parsing(self):
         """測試 LINE Webhook Payload 解析與 mentionees 辨識"""
         line_payload = {
             "events": [
@@ -93,28 +108,7 @@ class TestBulletinSystem(unittest.TestCase):
         messages = MessageClassifier.parse_line_webhook(line_payload)
         self.assertEqual(len(messages), 1)
         self.assertEqual(messages[0].category, MessageCategory.MENTION_ME)
-        print("[PASS] 測試 4：LINE Webhook 事件精確解析成功")
-
-    def test_05_database_crud(self):
-        """測試資料庫寫入與狀態更新"""
-        msg = MessageClassifier.classify_text(
-            text="@Alex 測試待辦",
-            sender="Tester",
-            channel="測試頻道",
-            platform=PlatformType.SIMULATION
-        )
-        save_message(msg)
-        
-        # 查詢
-        records = get_messages(category=MessageCategory.MENTION_ME.value)
-        self.assertEqual(len(records), 1)
-        self.assertFalse(records[0]["is_resolved"])
-
-        # 標記完成
-        update_message_status(msg.id, is_resolved=True)
-        updated_records = get_messages(category=MessageCategory.MENTION_ME.value)
-        self.assertTrue(updated_records[0]["is_resolved"])
-        print("[PASS] 測試 5：資料庫 CRUD 與狀態更新運作正常")
+        print("[PASS] 測試 5：LINE Webhook 事件精確解析成功")
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,7 +9,8 @@ class PlatformType(str, Enum):
     SIMULATION = "SIMULATION"
 
 class MessageCategory(str, Enum):
-    MENTION_ME = "MENTION_ME"       # @個人訊息/待辦
+    MENTION_ME = "MENTION_ME"       # @我的個人訊息/待辦
+    MENTION_TEAM = "MENTION_TEAM"   # @團隊其他成員交辦
     ANNOUNCEMENT = "ANNOUNCEMENT"   # 全域宣導事項
     IGNORE = "IGNORE"               # 一般閒聊 (不進入佈告欄)
 
@@ -27,6 +28,7 @@ class BulletinMessage(BaseModel):
     category: MessageCategory
     priority: PriorityLevel = PriorityLevel.NORMAL
     matched_reason: str = Field(default="", description="觸發篩選之規則理由")
+    target_users: List[str] = Field(default_factory=list, description="被 @ 提及之人員名單")
     is_read: bool = False
     is_resolved: bool = False
     is_pinned: bool = False
@@ -37,7 +39,7 @@ class SimulationPayload(BaseModel):
     platform: PlatformType = PlatformType.LINE
     channel_name: str = "專案架構討論群"
     sender_name: str = "技術主管"
-    content: str = "@Alex 請於今日下班前確認 API 規格書與佈告欄原型驗證"
+    content: str = "@Kevin 請於今日下班前更新伺服器憑證"
     mentions: Optional[List[str]] = None
 
 class ProfileUpdateRequest(BaseModel):

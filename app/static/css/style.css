@@ -118,6 +118,11 @@ body {
   font-weight: 700;
 }
 
+.stat-pill.team-stat .stat-value {
+  color: #38bdf8;
+  font-weight: 700;
+}
+
 .stat-pill.announcement-stat .stat-value {
   color: #fde047;
   font-weight: 700;
@@ -292,12 +297,43 @@ body {
   box-shadow: var(--shadow-main);
 }
 
-.column-header {
+.column-header, .column-header-with-tabs {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border-color);
+}
+
+.tab-group {
+  display: flex;
+  background: rgba(15, 23, 42, 0.6);
+  padding: 3px;
+  border-radius: 10px;
+  gap: 4px;
+  border: 1px solid var(--border-color);
+}
+
+.tab-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 6px 14px;
+  border-radius: 7px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tab-btn:hover {
+  color: var(--text-primary);
+}
+
+.tab-btn.active {
+  background: var(--accent-primary);
+  color: white;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
 }
 
 .column-title {
@@ -313,11 +349,6 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.mention-color {
-  background: rgba(99, 102, 241, 0.2);
-  color: #818cf8;
 }
 
 .announcement-color {
@@ -463,6 +494,16 @@ body {
 .p-normal {
   background: var(--normal-bg);
   color: #38bdf8;
+}
+
+.target-user-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: rgba(14, 165, 233, 0.2);
+  color: #38bdf8;
+  padding: 2px 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(56, 189, 248, 0.3);
 }
 
 .meta-info {
@@ -736,18 +777,4 @@ body {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-}
-
-.webhook-urls .code-copy-row {
-  background: rgba(15, 23, 42, 0.9);
-  padding: 6px 10px;
-  border-radius: 4px;
-  font-size: 0.8rem;
-  margin-top: 4px;
-  color: #cbd5e1;
-}
-
-.webhook-urls code {
-  color: #a5b4fc;
-  font-family: monospace;
 }
