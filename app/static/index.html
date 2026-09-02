@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>智慧通訊佈告欄 | LINE & Google Chat</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- 頂部導航列 -->
+    <header class="top-navbar">
+      <div class="brand-section">
+        <div class="brand-logo">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>智慧通訊網頁佈告欄</h1>
+          <span class="sub-title">LINE & Google Chat 即時篩選分流系統</span>
+        </div>
+      </div>
+
+      <div class="header-stats">
+        <div class="stat-pill mention-stat">
+          <span class="stat-label">待處理 @個人：</span>
+          <span class="stat-value" id="badge-mentions">0</span>
+        </div>
+        <div class="stat-pill announcement-stat">
+          <span class="stat-label">全域宣導：</span>
+          <span class="stat-value" id="badge-announcements">0</span>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <div class="ws-indicator" id="ws-indicator">
+          <span class="pulse-dot"></span>
+          <span class="status-text" id="ws-status-text">連線中...</span>
+        </div>
+        <button class="btn btn-primary" id="btn-open-simulate">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          模擬測試
+        </button>
+        <button class="btn btn-secondary" id="btn-open-settings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          設定
+        </button>
+      </div>
+    </header>
+
+    <!-- 篩選與搜尋工具列 -->
+    <div class="filter-bar">
+      <div class="search-box">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        <input type="text" id="search-input" placeholder="搜尋訊息內容、發送者或群組名稱...">
+      </div>
+
+      <div class="filter-options">
+        <select id="platform-filter" class="custom-select">
+          <option value="ALL">全部平台 (LINE & Google Chat)</option>
+          <option value="LINE">僅看 LINE</option>
+          <option value="GOOGLE_CHAT">僅看 Google Chat</option>
+        </select>
+
+        <label class="toggle-checkbox">
+          <input type="checkbox" id="unresolved-only">
+          <span class="toggle-label">只看未完成事項</span>
+        </label>
+
+        <button class="btn btn-icon" id="btn-refresh" title="重新整理">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- 主內容雙欄區塊 -->
+    <main class="dashboard-grid">
+      <!-- 左欄：@個人訊息與交辦 -->
+      <section class="board-column column-mentions">
+        <div class="column-header">
+          <div class="column-title">
+            <div class="column-icon mention-color">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7.5" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
+            </div>
+            <h2>📥 @我的訊息與待辦交辦</h2>
+          </div>
+          <span class="column-counter" id="count-mentions">0 則</span>
+        </div>
+        
+        <div class="message-list" id="list-mentions">
+          <div class="empty-state">目前無待處理的 @個人 訊息</div>
+        </div>
+      </section>
+
+      <!-- 右欄：全域宣導與公告事項 -->
+      <section class="board-column column-announcements">
+        <div class="column-header">
+          <div class="column-title">
+            <div class="column-icon announcement-color">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+            </div>
+            <h2>📢 全域宣導與重要公告</h2>
+          </div>
+          <span class="column-counter" id="count-announcements">0 則</span>
+        </div>
+
+        <div class="message-list" id="list-announcements">
+          <div class="empty-state">目前無宣導或公告事項</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 模擬訊息發送彈窗 (Simulation Modal) -->
+  <div class="modal-overlay" id="simulate-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>🧪 模擬訊息發送測試器</h3>
+        <button class="modal-close" id="btn-close-simulate">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-hint">可在此模擬發送 LINE 或 Google Chat 訊息，驗證系統之分流與篩選判斷。</p>
+        
+        <div class="form-group">
+          <label>通訊平台</label>
+          <div class="radio-cards">
+            <label class="radio-card">
+              <input type="radio" name="sim-platform" value="LINE" checked>
+              <span class="card-box line-box">LINE</span>
+            </label>
+            <label class="radio-card">
+              <input type="radio" name="sim-platform" value="GOOGLE_CHAT">
+              <span class="card-box gchat-box">Google Chat</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>來源群組 / 頻道名稱</label>
+            <input type="text" id="sim-channel" class="form-input" value="核心技術架構組">
+          </div>
+          <div class="form-group">
+            <label>發送者名稱</label>
+            <input type="text" id="sim-sender" class="form-input" value="專案主管 David">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>訊息內容</label>
+          <textarea id="sim-content" class="form-textarea" rows="3">@Alex 請確認今日下午 16:30 之架構審查會議，並儘速回覆進度！</textarea>
+        </div>
+
+        <div class="quick-templates">
+          <span class="template-label">快速套用範例：</span>
+          <button type="button" class="badge-btn" onclick="applyTemplate(1)">@個人緊急交辦</button>
+          <button type="button" class="badge-btn" onclick="applyTemplate(2)">【公告】全體系統維護</button>
+          <button type="button" class="badge-btn" onclick="applyTemplate(3)">@all 宣導事項</button>
+          <button type="button" class="badge-btn" onclick="applyTemplate(4)">一般群組閒聊 (應被忽略)</button>
+        </div>
+
+        <div id="sim-result" class="sim-result-box" style="display:none;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-cancel-simulate">關閉</button>
+        <button class="btn btn-primary" id="btn-send-simulate">發送模擬訊息</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 設定彈窗 (Settings Modal) -->
+  <div class="modal-overlay" id="settings-modal">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>⚙️ 個人身分與篩選規則設定</h3>
+        <button class="modal-close" id="btn-close-settings">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>個人主要顯示名稱</label>
+          <input type="text" id="cfg-name" class="form-input" placeholder="例如：Alex">
+        </div>
+
+        <div class="form-group">
+          <label>個人暱稱 / 標記別名 (以逗號分隔)</label>
+          <input type="text" id="cfg-aliases" class="form-input" placeholder="例如：Alex, 王大明, 大明, alex.wang">
+          <span class="form-hint">當訊息內包含 @別名 時，系統將自動擷取為 @個人 訊息</span>
+        </div>
+
+        <div class="form-group">
+          <label>LINE User ID 清單 (以逗號分隔)</label>
+          <input type="text" id="cfg-line-ids" class="form-input" placeholder="例如：U1234567890abcdef...">
+          <span class="form-hint">LINE Webhook 系統精確比對之 User ID</span>
+        </div>
+
+        <div class="form-group">
+          <label>Google Chat Email 清單 (以逗號分隔)</label>
+          <input type="text" id="cfg-google-emails" class="form-input" placeholder="例如：alex.wang@company.com">
+          <span class="form-hint">Google Chat UserMention 標記比對之 Email</span>
+        </div>
+
+        <div class="form-group">
+          <label>全域宣導關鍵字 (以逗號分隔)</label>
+          <textarea id="cfg-ann-keywords" class="form-textarea" rows="2"></textarea>
+          <span class="form-hint">訊息內包含任一關鍵字時將自動歸類至「全域宣導事項」</span>
+        </div>
+
+        <div class="form-group webhook-urls">
+          <label>Webhook 接收網址指南</label>
+          <div class="code-copy-row">
+            <span>LINE: <code>POST /api/webhook/line</code></span>
+          </div>
+          <div class="code-copy-row">
+            <span>Google Chat: <code>POST /api/webhook/google-chat</code></span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btn-cancel-settings">取消</button>
+        <button class="btn btn-primary" id="btn-save-settings">儲存設定</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

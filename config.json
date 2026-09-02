@@ -1,0 +1,36 @@
+{
+  "user_profile": {
+    "name": "Alex",
+    "aliases": ["Alex", "王大明", "大明", "alex.wang"],
+    "line_user_ids": ["U1234567890abcdef1234567890abcdef"],
+    "google_emails": ["alex.wang@company.com", "alex@example.com"]
+  },
+  "announcement_rules": {
+    "keywords": [
+      "@all",
+      "@everyone",
+      "[公告]",
+      "【公告】",
+      "[宣導]",
+      "【宣導】",
+      "重要通知",
+      "請全體同仁",
+      "全體注意",
+      "系統維護",
+      "SOP更新",
+      "緊急通報",
+      "公休通知",
+      "行政提醒"
+    ],
+    "high_priority_keywords": [
+      "緊急",
+      "停止運作",
+      "資安通報",
+      "斷電通知"
+    ]
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8765
+  }
+}
