@@ -193,10 +193,17 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)
 
-# ----------------- 前端頁面 -----------------
+# ----------------- 前端頁面與健康檢查 -----------------
+
+@app.api_route("/health", methods=["GET", "HEAD"])
+def health_check():
+    """提供外部監控工具之輕量健康檢查端點 (支援 GET 與 HEAD)"""
+    return {"status": "ok"}
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def serve_index():
+    """提供首頁靜態頁面 (支援 GET 與 HEAD)"""
     return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+
