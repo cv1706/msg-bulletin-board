@@ -17,12 +17,13 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from app.models import PlatformType, MessageCategory, PriorityLevel
 from app.classifier import MessageClassifier, load_config
-from app.database import init_db, save_message, get_messages, update_message_status, clear_all_messages
+from app.database import init_db, save_message, get_messages, update_message_status, clear_all_messages, clear_all_settings
 
 class TestBulletinSystem(unittest.TestCase):
     def setUp(self):
         init_db()
         clear_all_messages()
+        clear_all_settings()
 
     def test_01_mention_me_classification(self):
         """測試 @個人 訊息與暱稱比對"""
@@ -134,6 +135,42 @@ class TestBulletinSystem(unittest.TestCase):
         self.assertEqual(messages[0].created_at, "2024-09-07 10:34:00")
         print("[PASS] 測試 6：LINE 原始時間戳記成功轉換為台北時間 (UTC+8)")
 
+    def test_07_system_config_persistence(self):
+        """測試設定資料庫持久化儲存與自訂身分識別"""
+        from app.database import save_setting
+        from app.classifier import load_config
+        try:
+            custom_cfg = {
+                "user_profile": {
+                    "name": "國寶",
+                    "aliases": ["國寶", "kuobao"],
+                    "line_user_ids": ["U55dbf75"],
+                    "google_emails": ["kb@company.com"]
+                },
+                "announcement_rules": {
+                    "keywords": ["【公告】", "[公告]"],
+                    "high_priority_keywords": ["緊急"]
+                }
+            }
+            save_setting("system_config", json.dumps(custom_cfg, ensure_ascii=False))
+            loaded = load_config()
+            self.assertEqual(loaded["user_profile"]["name"], "國寶")
+            
+            # 驗證 @國寶 能成功進入 @我的交辦
+            msg = MessageClassifier.classify_text(
+                text="@國寶 請確認分子篩更換進度",
+                sender="主管",
+                channel="工務組",
+                platform=PlatformType.LINE
+            )
+            self.assertIsNotNone(msg)
+            self.assertEqual(msg.category, MessageCategory.MENTION_ME)
+            print("[PASS] 測試 7：設定持久化與自訂身分比對成功")
+        finally:
+            clear_all_settings()
+
+
 if __name__ == "__main__":
     unittest.main()
+
 

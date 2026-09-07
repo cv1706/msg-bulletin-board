@@ -1,6 +1,7 @@
 // 智慧通訊佈告欄前端邏輯 (支援個人 / 全團隊雙模式 + 本地持久化快取)
 
 const STORAGE_KEY = 'bulletin_local_messages_v1';
+const CONFIG_STORAGE_KEY = 'bulletin_local_config_v1';
 
 let allMessages = [];
 let ws = null;
@@ -42,7 +43,7 @@ const btnCloseSettings = document.getElementById('btn-close-settings');
 const btnCancelSettings = document.getElementById('btn-cancel-settings');
 const btnSaveSettings = document.getElementById('btn-save-settings');
 
-// 本地快取操作
+// 本地快取操作 (訊息)
 function saveToLocalStorage(msgs) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(msgs));
@@ -57,6 +58,24 @@ function loadFromLocalStorage() {
     return raw ? JSON.parse(raw) : [];
   } catch (e) {
     return [];
+  }
+}
+
+// 本地快取操作 (系統與身分設定)
+function saveConfigToLocalStorage(cfg) {
+  try {
+    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(cfg));
+  } catch (e) {
+    console.warn("Save local config failed:", e);
+  }
+}
+
+function loadConfigFromLocalStorage() {
+  try {
+    const raw = localStorage.getItem(CONFIG_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    return null;
   }
 }
 
@@ -461,18 +480,76 @@ btnSendSimulate.onclick = async () => {
 };
 
 // 設定相關
+function applyConfigToForm(cfg) {
+  if (!cfg) return;
+  const user = cfg.user_profile || {};
+  const elName = document.getElementById('cfg-name');
+  const elAliases = document.getElementById('cfg-aliases');
+  const elLineIds = document.getElementById('cfg-line-ids');
+  const elGoogleEmails = document.getElementById('cfg-google-emails');
+  const elAnnKeywords = document.getElementById('cfg-ann-keywords');
+
+  if (elName) elName.value = user.name || '';
+  if (elAliases) elAliases.value = (user.aliases || []).join(', ');
+  if (elLineIds) elLineIds.value = (user.line_user_ids || []).join(', ');
+  if (elGoogleEmails) elGoogleEmails.value = (user.google_emails || []).join(', ');
+  if (elAnnKeywords) {
+    const kw = cfg.announcement_rules?.keywords || [];
+    elAnnKeywords.value = kw.join(', ');
+  }
+}
+
+async function syncConfigToServer(cfg) {
+  try {
+    const user = cfg.user_profile || {};
+    const ann = cfg.announcement_rules || {};
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: user.name || '',
+        aliases: user.aliases || [],
+        line_user_ids: user.line_user_ids || [],
+        google_emails: user.google_emails || [],
+        announcement_keywords: ann.keywords || []
+      })
+    });
+    return res.ok;
+  } catch (e) {
+    console.warn("Sync config to server failed:", e);
+    return false;
+  }
+}
+
 async function loadSettings() {
+  // 1. 優先從本地 LocalStorage 帶入自訂設定
+  const localCfg = loadConfigFromLocalStorage();
+  if (localCfg) {
+    applyConfigToForm(localCfg);
+    currentConfig = localCfg;
+  }
+
+  // 2. 向伺服器確認最新設定
   try {
     const res = await fetch('/api/config');
-    currentConfig = await res.json();
-    const user = currentConfig.user_profile || {};
-    document.getElementById('cfg-name').value = user.name || '';
-    document.getElementById('cfg-aliases').value = (user.aliases || []).join(', ');
-    document.getElementById('cfg-line-ids').value = (user.line_user_ids || []).join(', ');
-    document.getElementById('cfg-google-emails').value = (user.google_emails || []).join(', ');
-    document.getElementById('cfg-ann-keywords').value = (currentConfig.announcement_rules?.keywords || []).join(', ');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const serverCfg = await res.json();
+    const serverUser = serverCfg.user_profile || {};
+
+    // 若伺服器為未修改預設 (Alex) 且本地有自訂設定，自動將本地設定補發至伺服器
+    const isServerDefault = (!serverUser.name || serverUser.name === 'Alex');
+    if (isServerDefault && localCfg && localCfg.is_customized) {
+      console.log("偵測到伺服器為預設設定，自動同步本地自訂身分至伺服器...");
+      applyConfigToForm(localCfg);
+      await syncConfigToServer(localCfg);
+    } else {
+      // 否則以伺服器設定為準並更新本地快取
+      currentConfig = serverCfg;
+      applyConfigToForm(serverCfg);
+      saveConfigToLocalStorage(serverCfg);
+    }
   } catch (err) {
-    console.error("Load config failed:", err);
+    console.warn("Load config from server failed, using local cache:", err);
   }
 }
 
@@ -483,24 +560,36 @@ btnSaveSettings.onclick = async () => {
   const google_emails = document.getElementById('cfg-google-emails').value.split(',').map(s => s.trim()).filter(Boolean);
   const announcement_keywords = document.getElementById('cfg-ann-keywords').value.split(',').map(s => s.trim()).filter(Boolean);
 
+  const payload = {
+    is_customized: true,
+    user_profile: {
+      name,
+      aliases,
+      line_user_ids,
+      google_emails
+    },
+    announcement_rules: {
+      keywords: announcement_keywords
+    }
+  };
+
+  // 1. 立即持久化至本地 LocalStorage (重整永不遺失)
+  saveConfigToLocalStorage(payload);
+  currentConfig = payload;
+
+  // 2. 發送至後端儲存
   try {
-    const res = await fetch('/api/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name,
-        aliases,
-        line_user_ids,
-        google_emails,
-        announcement_keywords
-      })
-    });
-    if (res.ok) {
-      alert("設定已成功儲存！");
+    const ok = await syncConfigToServer(payload);
+    if (ok) {
+      alert("設定已成功儲存並同步！");
+      settingsModal.classList.remove('active');
+    } else {
+      alert("設定已儲存於瀏覽器本地，伺服器同步中...");
       settingsModal.classList.remove('active');
     }
   } catch (err) {
-    alert("儲存失敗：" + err.message);
+    alert("已儲存於瀏覽器本地，伺服器連線失敗：" + err.message);
+    settingsModal.classList.remove('active');
   }
 };
 
@@ -533,11 +622,19 @@ function escapeHtml(str) {
 
 // 頁面初次載入
 window.onload = () => {
-  // 先載入本地快取快速呈現
+  // 先載入本地快取快速呈現訊息
   allMessages = loadFromLocalStorage();
   if (allMessages.length > 0) {
     renderMessages();
   }
+
+  // 靜默載入/檢查本地自訂設定，確保與伺服器雙向同步
+  const localCfg = loadConfigFromLocalStorage();
+  if (localCfg && localCfg.is_customized) {
+    currentConfig = localCfg;
+    syncConfigToServer(localCfg);
+  }
+
   // 抓取伺服器最新資料並初始化 WebSocket
   fetchMessages();
   initWebSocket();

@@ -50,6 +50,10 @@ def init_db():
             created_at VARCHAR(32) NOT NULL,
             raw_payload TEXT
         );
+        CREATE TABLE IF NOT EXISTS system_settings (
+            key VARCHAR(64) PRIMARY KEY,
+            value TEXT NOT NULL
+        );
         """)
         conn.commit()
     else:
@@ -71,6 +75,12 @@ def init_db():
             raw_payload TEXT
         );
         """)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS system_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        """)
         cursor.execute("PRAGMA table_info(messages)")
         columns = [col[1] for col in cursor.fetchall()]
         if "target_users" not in columns:
@@ -78,6 +88,37 @@ def init_db():
         conn.commit()
         
     conn.close()
+
+def save_setting(key: str, value: str):
+    """儲存系統設定鍵值對至資料庫"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if is_postgres():
+        cursor.execute("""
+        INSERT INTO system_settings (key, value)
+        VALUES (%s, %s)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+        """, (key, value))
+    else:
+        cursor.execute("""
+        INSERT OR REPLACE INTO system_settings (key, value)
+        VALUES (?, ?);
+        """, (key, value))
+    conn.commit()
+    conn.close()
+
+def get_setting(key: str) -> Optional[str]:
+    """從資料庫讀取指定系統設定值"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    placeholder = "%s" if is_postgres() else "?"
+    cursor.execute(f"SELECT value FROM system_settings WHERE key = {placeholder}", (key,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return row[0] if isinstance(row, (tuple, list)) else row["value"]
+    return None
+
 
 def save_message(msg: BulletinMessage):
     conn = get_db_connection()
@@ -249,3 +290,11 @@ def clear_all_messages():
     cursor.execute("DELETE FROM messages")
     conn.commit()
     conn.close()
+
+def clear_all_settings():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM system_settings")
+    conn.commit()
+    conn.close()
+

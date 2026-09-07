@@ -9,6 +9,14 @@ from app.models import BulletinMessage, PlatformType, MessageCategory, PriorityL
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
 
 def load_config() -> Dict[str, Any]:
+    try:
+        from app.database import get_setting
+        db_cfg_str = get_setting("system_config")
+        if db_cfg_str:
+            return json.loads(db_cfg_str)
+    except Exception as e:
+        print("Load config from database skipped or failed:", e)
+
     if not os.path.exists(CONFIG_PATH):
         return {
             "user_profile": {
@@ -26,8 +34,20 @@ def load_config() -> Dict[str, Any]:
         return json.load(f)
 
 def save_config(cfg: Dict[str, Any]):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    # 1. 寫入資料庫持久化
+    try:
+        from app.database import save_setting
+        save_setting("system_config", json.dumps(cfg, ensure_ascii=False))
+    except Exception as e:
+        print("Save config to database failed:", e)
+
+    # 2. 同步寫入檔案
+    try:
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("Save config to file failed:", e)
+
 
 class MessageClassifier:
     @staticmethod
