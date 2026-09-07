@@ -4,7 +4,7 @@ import re
 import uuid
 from typing import Tuple, Optional, Dict, Any, List
 from datetime import datetime
-from app.models import BulletinMessage, PlatformType, MessageCategory, PriorityLevel
+from app.models import BulletinMessage, PlatformType, MessageCategory, PriorityLevel, TAIPEI_TZ, get_taipei_now_str
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
 
@@ -39,7 +39,15 @@ class MessageClassifier:
         return [m for m in matches if m.lower() not in ["all", "everyone", "channel", "here"]]
 
     @classmethod
-    def classify_text(cls, text: str, mentions: Optional[List[str]] = None, sender: str = "", channel: str = "", platform: PlatformType = PlatformType.SIMULATION) -> Optional[BulletinMessage]:
+    def classify_text(
+        cls,
+        text: str,
+        mentions: Optional[List[str]] = None,
+        sender: str = "",
+        channel: str = "",
+        platform: PlatformType = PlatformType.SIMULATION,
+        created_at: Optional[str] = None
+    ) -> Optional[BulletinMessage]:
         config = load_config()
         user_profile = config.get("user_profile", {})
         aliases = [a.lower() for a in user_profile.get("aliases", []) if a]
@@ -53,6 +61,7 @@ class MessageClassifier:
         high_priority_keywords = ann_rules.get("high_priority_keywords", [])
         
         text_lower = text.lower()
+        msg_time = created_at or get_taipei_now_str()
         
         # 1. 優先判斷是否為「全域宣導事項 / 公告」
         is_announcement = False
@@ -82,7 +91,7 @@ class MessageClassifier:
                 matched_reason=matched_ann_reason,
                 target_users=["全體同仁"],
                 is_pinned=(priority == PriorityLevel.URGENT),
-                created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                created_at=msg_time
             )
 
         # 2. 統整所有被提及的人名/ID
@@ -143,7 +152,7 @@ class MessageClassifier:
             priority=priority,
             matched_reason=matched_reason,
             target_users=list(all_targets),
-            created_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            created_at=msg_time
         )
 
     @classmethod
@@ -180,12 +189,23 @@ class MessageClassifier:
                 if m.get("type") == "all":
                     mentions.append("@all")
                     
+            # 提取 LINE 原始訊息時間戳記 (毫秒)
+            event_ts = event.get("timestamp")
+            if event_ts:
+                try:
+                    msg_time = datetime.fromtimestamp(event_ts / 1000.0, tz=TAIPEI_TZ).strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    msg_time = get_taipei_now_str()
+            else:
+                msg_time = get_taipei_now_str()
+
             classified = cls.classify_text(
                 text=text,
                 mentions=mentions,
                 sender=sender_name,
                 channel=channel_name,
-                platform=PlatformType.LINE
+                platform=PlatformType.LINE,
+                created_at=msg_time
             )
             if classified:
                 classified.raw_payload = event
@@ -218,12 +238,25 @@ class MessageClassifier:
                 if user_meta.get("email"):
                     mentions.append(user_meta.get("email"))
                     
+        # 提取 Google Chat 原始訊息時間 (RFC 3339 / ISO)
+        create_time_str = message.get("createTime")
+        if create_time_str:
+            try:
+                clean_time = create_time_str.replace("Z", "+00:00")
+                dt = datetime.fromisoformat(clean_time).astimezone(TAIPEI_TZ)
+                msg_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+            except Exception:
+                msg_time = get_taipei_now_str()
+        else:
+            msg_time = get_taipei_now_str()
+
         classified = cls.classify_text(
             text=text,
             mentions=mentions,
             sender=sender_name,
             channel=channel_name,
-            platform=PlatformType.GOOGLE_CHAT
+            platform=PlatformType.GOOGLE_CHAT,
+            created_at=msg_time
         )
         if classified:
             classified.raw_payload = body

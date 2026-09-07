@@ -1,7 +1,13 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from enum import Enum
+
+# 定義台灣時區 (UTC+8)
+TAIPEI_TZ = timezone(timedelta(hours=8))
+
+def get_taipei_now_str() -> str:
+    return datetime.now(TAIPEI_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 class PlatformType(str, Enum):
     LINE = "LINE"
@@ -32,7 +38,7 @@ class BulletinMessage(BaseModel):
     is_read: bool = False
     is_resolved: bool = False
     is_pinned: bool = False
-    created_at: str = Field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    created_at: str = Field(default_factory=get_taipei_now_str)
     raw_payload: Optional[Dict[str, Any]] = None
 
 class SimulationPayload(BaseModel):

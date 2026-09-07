@@ -3,7 +3,7 @@ import json
 import sqlite3
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
-from app.models import BulletinMessage, PlatformType, MessageCategory, PriorityLevel
+from app.models import BulletinMessage, PlatformType, MessageCategory, PriorityLevel, TAIPEI_TZ
 
 # 檢查是否配置雲端 PostgreSQL 資料庫 (例如 Render PostgreSQL 或 Supabase)
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -159,7 +159,7 @@ def get_messages(category: Optional[str] = None, platform: Optional[str] = None,
         params.append(1 if is_resolved else 0)
         
     if days and days > 0:
-        cutoff_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        cutoff_date = (datetime.now(TAIPEI_TZ) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
         query += f" AND (is_pinned = 1 OR created_at >= {param_placeholder})"
         params.append(cutoff_date)
         

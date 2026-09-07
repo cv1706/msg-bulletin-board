@@ -110,5 +110,30 @@ class TestBulletinSystem(unittest.TestCase):
         self.assertEqual(messages[0].category, MessageCategory.MENTION_ME)
         print("[PASS] 測試 5：LINE Webhook 事件精確解析成功")
 
+    def test_06_taipei_timezone_conversion(self):
+        """測試 LINE Webhook 毫秒時間戳記轉換為台北時間 (UTC+8)"""
+        # 1725676440000 為 UTC 2024-09-07 02:34:00 -> 台北時間應為 2024-09-07 10:34:00
+        line_payload = {
+            "events": [
+                {
+                    "type": "message",
+                    "timestamp": 1725676440000,
+                    "source": {
+                        "type": "user",
+                        "userId": "U12345678"
+                    },
+                    "message": {
+                        "type": "text",
+                        "text": "【公告】全體同仁請注意冷卻水塔定期檢測"
+                    }
+                }
+            ]
+        }
+        messages = MessageClassifier.parse_line_webhook(line_payload)
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].created_at, "2024-09-07 10:34:00")
+        print("[PASS] 測試 6：LINE 原始時間戳記成功轉換為台北時間 (UTC+8)")
+
 if __name__ == "__main__":
     unittest.main()
+

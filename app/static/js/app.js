@@ -60,6 +60,34 @@ function loadFromLocalStorage() {
   }
 }
 
+// 時間解析與格式化
+function parseMessageDate(dateStr) {
+  if (!dateStr) return new Date();
+  if (typeof dateStr === 'string' && dateStr.includes(' ') && !dateStr.includes('T')) {
+    const parsed = new Date(dateStr.replace(' ', 'T'));
+    if (!isNaN(parsed.getTime())) return parsed;
+  }
+  const d = new Date(dateStr);
+  return isNaN(d.getTime()) ? new Date() : d;
+}
+
+function formatMessageTime(dateStr) {
+  if (!dateStr) return '';
+  if (typeof dateStr === 'string' && dateStr.length >= 16) {
+    return dateStr.slice(5, 16);
+  }
+  try {
+    const d = parseMessageDate(dateStr);
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const h = String(d.getHours()).padStart(2, '0');
+    const min = String(d.getMinutes()).padStart(2, '0');
+    return `${m}-${day} ${h}:${min}`;
+  } catch (e) {
+    return dateStr;
+  }
+}
+
 // 音效播放 (Web Audio API)
 function playNotificationSound(isUrgent = false) {
   try {
@@ -169,7 +197,7 @@ async function fetchMessages() {
     allMessages = Array.from(msgMap.values());
     allMessages.sort((a, b) => {
       if (a.is_pinned !== b.is_pinned) return b.is_pinned ? 1 : -1;
-      return new Date(b.created_at) - new Date(a.created_at);
+      return parseMessageDate(b.created_at) - parseMessageDate(a.created_at);
     });
 
     saveToLocalStorage(allMessages);
@@ -215,7 +243,7 @@ function renderMessages() {
   const filtered = allMessages.filter(m => {
     // 時間過濾 (非置頂訊息且選擇特定天數時)
     if (selectedDays > 0 && !m.is_pinned) {
-      const msgDate = new Date(m.created_at);
+      const msgDate = parseMessageDate(m.created_at);
       const diffDays = (now - msgDate) / (1000 * 60 * 60 * 24);
       if (diffDays > selectedDays) return false;
     }
@@ -301,7 +329,7 @@ function renderColumn(container, list, isMentionCol, isTeamView) {
             ${priorityBadge}
             ${targetBadges}
           </div>
-          <span class="time-tag">${msg.created_at.slice(5, 16)}</span>
+          <span class="time-tag">${formatMessageTime(msg.created_at)}</span>
         </div>
 
         <div class="meta-info">
