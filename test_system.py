@@ -169,8 +169,44 @@ class TestBulletinSystem(unittest.TestCase):
         finally:
             clear_all_settings()
 
+    def test_08_reclassify_messages(self):
+        """測試動態更新身分後，自動重新校準歷史訊息為 @我的交辦"""
+        from app.database import reclassify_all_messages, save_setting, get_messages
+        # 先以初始身分 (Alex) 存入一則 @國寶 的訊息 (進入 MENTION_TEAM)
+        msg = MessageClassifier.classify_text(
+            text="@國寶 請確認英業達分子篩更換發包進度",
+            mentions=["Uf5aa5d73", "國寶"],
+            sender="主管",
+            channel="工務組",
+            platform=PlatformType.LINE
+        )
+        self.assertEqual(msg.category, MessageCategory.MENTION_TEAM)
+        save_message(msg)
+
+        # 隨後使用者將身分設定改為包含「國寶」
+        custom_cfg = {
+            "user_profile": {
+                "name": "國寶",
+                "aliases": ["國寶"],
+                "line_user_ids": [],
+                "google_emails": []
+            },
+            "announcement_rules": {"keywords": []}
+        }
+        save_setting("system_config", json.dumps(custom_cfg, ensure_ascii=False))
+
+        # 執行重新校準
+        updated = reclassify_all_messages()
+        self.assertEqual(updated, 1)
+
+        # 驗證該筆歷史訊息已升級為 MENTION_ME
+        messages = get_messages()
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["category"], MessageCategory.MENTION_ME.value)
+        print("[PASS] 測試 8：歷史訊息成功自動校準為 @我的交辦")
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

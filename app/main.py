@@ -12,7 +12,7 @@ from app.models import (
 )
 from app.database import (
     init_db, save_message, get_messages, update_message_status,
-    delete_message, clear_all_messages
+    delete_message, clear_all_messages, reclassify_all_messages
 )
 from app.classifier import MessageClassifier, load_config, save_config
 from app.websocket_manager import ws_manager
@@ -170,7 +170,7 @@ def get_system_config():
     return load_config()
 
 @app.post("/api/config")
-def update_system_config(profile: ProfileUpdateRequest):
+async def update_system_config(profile: ProfileUpdateRequest):
     cfg = load_config()
     cfg["user_profile"] = {
         "name": profile.name,
@@ -180,7 +180,21 @@ def update_system_config(profile: ProfileUpdateRequest):
     }
     cfg["announcement_rules"]["keywords"] = profile.announcement_keywords
     save_config(cfg)
-    return {"status": "saved", "config": cfg}
+    
+    # 自動重新校準歷史訊息分類歸屬
+    reclassified_count = reclassify_all_messages()
+    if reclassified_count > 0:
+        await ws_manager.broadcast("CONFIG_UPDATED", {"reclassified": reclassified_count})
+
+    return {"status": "saved", "config": cfg, "reclassified_count": reclassified_count}
+
+@app.post("/api/messages/reclassify")
+async def trigger_reclassify():
+    reclassified_count = reclassify_all_messages()
+    if reclassified_count > 0:
+        await ws_manager.broadcast("CONFIG_UPDATED", {"reclassified": reclassified_count})
+    return {"status": "ok", "reclassified_count": reclassified_count}
+
 
 # ----------------- WebSocket 連線 -----------------
 

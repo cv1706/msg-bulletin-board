@@ -192,6 +192,8 @@ function handleWebSocketMessage(payload) {
     allMessages = [];
     saveToLocalStorage(allMessages);
     renderMessages();
+  } else if (type === 'CONFIG_UPDATED') {
+    fetchMessages();
   }
 }
 
@@ -297,18 +299,45 @@ function renderMessages() {
   // 依當前 Tab 渲染左欄
   if (currentMentionTab === 'ME') {
     countMentions.textContent = `${myMentions.length} 則`;
-    renderColumn(listMentions, myMentions, true, false);
+    renderColumn(listMentions, myMentions, true, false, query, teamMentions.length);
   } else {
     countMentions.textContent = `${teamMentions.length} 則`;
-    renderColumn(listMentions, teamMentions, true, true);
+    renderColumn(listMentions, teamMentions, true, true, query, myMentions.length);
   }
 
-  renderColumn(listAnnouncements, announcements, false, false);
+  renderColumn(listAnnouncements, announcements, false, false, query, 0);
 }
 
-function renderColumn(container, list, isMentionCol, isTeamView) {
+function highlightMatch(text, query) {
+  if (!text) return '';
+  const escapedText = escapeHtml(text);
+  if (!query) return escapedText;
+  const escapedQuery = escapeHtml(query);
+  try {
+    const reg = new RegExp(`(${escapedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    return escapedText.replace(reg, '<mark style="background:#fef08a; color:#854d0e; padding:1px 3px; border-radius:3px;">$1</mark>');
+  } catch (e) {
+    return escapedText;
+  }
+}
+
+function renderColumn(container, list, isMentionCol, isTeamView, query = '', otherCount = 0) {
   if (list.length === 0) {
-    container.innerHTML = `<div class="empty-state">${isMentionCol ? (isTeamView ? '目前無團隊成員交辦訊息' : '目前無屬於您的 @個人 訊息') : '目前無符合條件的宣導或公告事項'}</div>`;
+    if (query && isMentionCol && !isTeamView && otherCount > 0) {
+      container.innerHTML = `
+        <div class="empty-state" style="line-height:1.9; padding:24px 16px;">
+          🔍 搜尋「<strong style="color:#60a5fa;">${escapeHtml(query)}</strong>」在 <em>@我的交辦</em> 無符合項目，<br>
+          但在 <strong>全團隊交辦</strong> 中找到 <strong>${otherCount}</strong> 則相符交辦。<br>
+          <button class="action-btn" onclick="switchMentionTab('TEAM')" style="margin-top:12px; display:inline-block; padding:7px 16px; background:#3b82f6; color:#fff; font-weight:600; border:none; border-radius:6px; cursor:pointer;">
+            👉 立即切換至「全團隊交辦」查看 (${otherCount} 則)
+          </button>
+        </div>
+      `;
+    } else if (query) {
+      container.innerHTML = `<div class="empty-state">未找到與「${escapeHtml(query)}」相符的訊息</div>`;
+    } else {
+      container.innerHTML = `<div class="empty-state">${isMentionCol ? (isTeamView ? '目前無團隊成員交辦訊息' : '目前無屬於您的 @個人 訊息') : '目前無符合條件的宣導或公告事項'}</div>`;
+    }
     return;
   }
 
@@ -330,7 +359,7 @@ function renderColumn(container, list, isMentionCol, isTeamView) {
     // 目標被標記者標籤
     let targetBadges = '';
     if (msg.target_users && msg.target_users.length > 0) {
-      targetBadges = msg.target_users.map(u => `<span class="target-user-badge">@${escapeHtml(u)}</span>`).join(' ');
+      targetBadges = msg.target_users.map(u => `<span class="target-user-badge">@${highlightMatch(u, query)}</span>`).join(' ');
     }
 
     const cardClasses = [
@@ -352,12 +381,12 @@ function renderColumn(container, list, isMentionCol, isTeamView) {
         </div>
 
         <div class="meta-info">
-          <span class="channel-tag">${escapeHtml(msg.channel_name)}</span>
+          <span class="channel-tag">${highlightMatch(msg.channel_name, query)}</span>
           <span>&bull;</span>
-          <span class="sender-tag">${escapeHtml(msg.sender_name)}</span>
+          <span class="sender-tag">${highlightMatch(msg.sender_name, query)}</span>
         </div>
 
-        <div class="msg-content">${escapeHtml(msg.content)}</div>
+        <div class="msg-content">${highlightMatch(msg.content, query)}</div>
 
         ${msg.matched_reason ? `<div class="matched-reason-bar">${escapeHtml(msg.matched_reason)}</div>` : ''}
 
@@ -583,6 +612,11 @@ btnSaveSettings.onclick = async () => {
     if (ok) {
       alert("設定已成功儲存並同步！");
       settingsModal.classList.remove('active');
+      // 觸發伺服器重新校準歷史訊息歸屬並刷新
+      try {
+        await fetch('/api/messages/reclassify', { method: 'POST' });
+        await fetchMessages();
+      } catch (e) {}
     } else {
       alert("設定已儲存於瀏覽器本地，伺服器同步中...");
       settingsModal.classList.remove('active');
@@ -608,8 +642,44 @@ btnOpenSettings.onclick = () => {
 btnCloseSettings.onclick = () => settingsModal.classList.remove('active');
 btnCancelSettings.onclick = () => settingsModal.classList.remove('active');
 
+// 智慧搜尋分頁引導與切換
+function handleSearchInput() {
+  const query = searchInput.value.toLowerCase().trim();
+  if (query && currentMentionTab === 'ME') {
+    const selectedDays = timeFilter ? parseInt(timeFilter.value, 10) : 3;
+    const now = new Date();
+
+    const matchesMe = allMessages.some(m => {
+      if (selectedDays > 0 && !m.is_pinned) {
+        if ((now - parseMessageDate(m.created_at)) / (1000 * 60 * 60 * 24) > selectedDays) return false;
+      }
+      if (platformFilter.value !== 'ALL' && m.platform !== platformFilter.value) return false;
+      if (unresolvedOnly.checked && m.is_resolved) return false;
+      const targetStr = (m.target_users || []).join(' ');
+      return (m.content + m.sender_name + m.channel_name + targetStr).toLowerCase().includes(query) && m.category === 'MENTION_ME';
+    });
+
+    const matchesTeam = allMessages.some(m => {
+      if (selectedDays > 0 && !m.is_pinned) {
+        if ((now - parseMessageDate(m.created_at)) / (1000 * 60 * 60 * 24) > selectedDays) return false;
+      }
+      if (platformFilter.value !== 'ALL' && m.platform !== platformFilter.value) return false;
+      if (unresolvedOnly.checked && m.is_resolved) return false;
+      const targetStr = (m.target_users || []).join(' ');
+      return (m.content + m.sender_name + m.channel_name + targetStr).toLowerCase().includes(query) && (m.category === 'MENTION_TEAM' || m.category === 'MENTION_ME');
+    });
+
+    // 若 @我的交辦 無結果，但 全團隊交辦 有結果，自動切換至 全團隊交辦
+    if (!matchesMe && matchesTeam) {
+      switchMentionTab('TEAM');
+      return;
+    }
+  }
+  renderMessages();
+}
+
 // 事件監聽
-searchInput.oninput = renderMessages;
+searchInput.oninput = handleSearchInput;
 if (timeFilter) timeFilter.onchange = fetchMessages;
 platformFilter.onchange = renderMessages;
 unresolvedOnly.onchange = renderMessages;

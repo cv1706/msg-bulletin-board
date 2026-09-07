@@ -298,3 +298,82 @@ def clear_all_settings():
     conn.commit()
     conn.close()
 
+def reclassify_all_messages():
+    """依據最新個人身分與別名設定，重新計算歷史未結案訊息之分類 (MENTION_ME / MENTION_TEAM)"""
+    from app.classifier import load_config
+    config = load_config()
+    user_profile = config.get("user_profile", {})
+    name = (user_profile.get("name") or "").lower()
+    aliases = [a.lower() for a in user_profile.get("aliases", []) if a]
+    if name:
+        aliases.append(name)
+    line_ids = user_profile.get("line_user_ids", [])
+    google_emails = [e.lower() for e in user_profile.get("google_emails", []) if e]
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    if is_postgres():
+        import psycopg2.extras
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cursor.execute("SELECT id, content, target_users, category FROM messages WHERE is_resolved = 0")
+        rows = cursor.fetchall()
+    else:
+        cursor.execute("SELECT id, content, target_users, category FROM messages WHERE is_resolved = 0")
+        rows = cursor.fetchall()
+
+    param_placeholder = "%s" if is_postgres() else "?"
+    updated_count = 0
+    for r in rows:
+        msg_id = r["id"]
+        current_cat = r["category"]
+        raw_targets = r["target_users"]
+        targets = json.loads(raw_targets) if raw_targets else []
+        content_lower = (r["content"] or "").lower()
+
+        # 判定是否提及「我」
+        is_mention_me = False
+        matched_reason = ""
+        for t in targets:
+            t_lower = t.lower()
+            if t in line_ids:
+                is_mention_me = True
+                matched_reason = f"命中個人 LINE ID ({t})"
+                break
+            if any(email in t_lower for email in google_emails):
+                is_mention_me = True
+                matched_reason = f"命中個人 Google Email ({t})"
+                break
+            if t_lower in aliases:
+                is_mention_me = True
+                matched_reason = f"命中個人暱稱 (@{t})"
+                break
+
+        # 若 target 未抽取完整，額外檢查內容是否直接 @暱稱
+        if not is_mention_me:
+            for alias in aliases:
+                if f"@{alias}" in content_lower or f"＠{alias}" in content_lower:
+                    is_mention_me = True
+                    matched_reason = f"內容命中個人暱稱 (@{alias})"
+                    break
+
+        new_cat = None
+        if current_cat in [MessageCategory.MENTION_ME.value, MessageCategory.MENTION_TEAM.value]:
+            if is_mention_me and current_cat != MessageCategory.MENTION_ME.value:
+                new_cat = MessageCategory.MENTION_ME.value
+            elif not is_mention_me and current_cat != MessageCategory.MENTION_TEAM.value:
+                new_cat = MessageCategory.MENTION_TEAM.value
+                matched_reason = f"標記團隊成員 ({', '.join(targets)})"
+
+        if new_cat:
+            cursor.execute(
+                f"UPDATE messages SET category = {param_placeholder}, matched_reason = {param_placeholder} WHERE id = {param_placeholder}",
+                (new_cat, matched_reason, msg_id)
+            )
+            updated_count += 1
+
+    conn.commit()
+    conn.close()
+    return updated_count
+
+
