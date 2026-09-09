@@ -351,6 +351,11 @@ body {
   justify-content: center;
 }
 
+.mention-color {
+  background: rgba(99, 102, 241, 0.2);
+  color: #a5b4fc;
+}
+
 .announcement-color {
   background: rgba(245, 158, 11, 0.2);
   color: #fbbf24;

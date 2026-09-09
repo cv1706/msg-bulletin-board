@@ -1,4 +1,4 @@
-// 智慧通訊佈告欄前端邏輯 (支援個人 / 全團隊雙模式 + 本地持久化快取)
+// 智慧通訊佈告欄前端邏輯 (交辦事項統一專區 + 模糊搜尋 + 本地持久化快取)
 
 const STORAGE_KEY = 'bulletin_local_messages_v1';
 const CONFIG_STORAGE_KEY = 'bulletin_local_config_v1';
@@ -6,23 +6,16 @@ const CONFIG_STORAGE_KEY = 'bulletin_local_config_v1';
 let allMessages = [];
 let ws = null;
 let currentConfig = null;
-let currentMentionTab = 'ME'; // 'ME' 或 'TEAM'
 
 // DOM 元素快取
 const listMentions = document.getElementById('list-mentions');
 const listAnnouncements = document.getElementById('list-announcements');
 const countMentions = document.getElementById('count-mentions');
 const countAnnouncements = document.getElementById('count-announcements');
-const countTabMe = document.getElementById('count-tab-me');
-const countTabTeam = document.getElementById('count-tab-team');
-const badgeMentions = document.getElementById('badge-mentions');
 const badgeTeam = document.getElementById('badge-team');
 const badgeAnnouncements = document.getElementById('badge-announcements');
 const wsIndicator = document.getElementById('ws-indicator');
 const wsStatusText = document.getElementById('ws-status-text');
-
-const tabMyMentions = document.getElementById('tab-my-mentions');
-const tabTeamMentions = document.getElementById('tab-team-mentions');
 
 const searchInput = document.getElementById('search-input');
 const timeFilter = document.getElementById('time-filter');
@@ -61,7 +54,7 @@ function loadFromLocalStorage() {
   }
 }
 
-// 本地快取操作 (系統與身分設定)
+// 本地快取操作 (系統篩選設定)
 function saveConfigToLocalStorage(cfg) {
   try {
     localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(cfg));
@@ -133,7 +126,170 @@ function playNotificationSound(isUrgent = false) {
   }
 }
 
-// WebSocket 連線初始化
+// ----------------- 模糊搜尋核心演算法 (Fuzzy Search Engine) -----------------
+
+/**
+ * 針對單一文字區塊執行模糊比對並計算分數
+ * @param {string} text 目標文字
+ * @param {string} pattern 搜尋關鍵字
+ * @returns {{ match: boolean, score: number, ranges: Array<[number, number]> }}
+ */
+function fuzzyMatch(text, pattern) {
+  if (!pattern) return { match: true, score: 1, ranges: [] };
+  if (!text) return { match: false, score: 0, ranges: [] };
+
+  const t = String(text);
+  const tLower = t.toLowerCase();
+  const p = String(pattern).trim();
+  const pLower = p.toLowerCase();
+
+  if (!pLower) return { match: true, score: 1, ranges: [] };
+
+  // 1. 完全精確子字串包含 (最高優先度)
+  const directIdx = tLower.indexOf(pLower);
+  if (directIdx !== -1) {
+    return {
+      match: true,
+      score: 100 + (pLower.length / tLower.length) * 40,
+      ranges: [[directIdx, directIdx + pLower.length]]
+    };
+  }
+
+  // 2. 多關鍵字空格分詞 (Token AND Search)
+  const tokens = pLower.split(/\s+/).filter(Boolean);
+  if (tokens.length > 1) {
+    let allTokensFound = true;
+    let ranges = [];
+    let tokenScore = 60;
+    for (const token of tokens) {
+      const idx = tLower.indexOf(token);
+      if (idx !== -1) {
+        ranges.push([idx, idx + token.length]);
+        tokenScore += 10;
+      } else {
+        allTokensFound = false;
+        break;
+      }
+    }
+    if (allTokensFound) {
+      return { match: true, score: tokenScore, ranges };
+    }
+  }
+
+  // 3. 子序列字元模糊搜尋 (Subsequence Fuzzy Match)
+  let pIdx = 0;
+  let score = 0;
+  let consecutive = 0;
+  let ranges = [];
+  let currentRange = null;
+
+  for (let tIdx = 0; tIdx < tLower.length && pIdx < pLower.length; tIdx++) {
+    if (tLower[tIdx] === pLower[pIdx]) {
+      pIdx++;
+      consecutive++;
+      score += 4 + (consecutive * 3); // 連續命中字元額外加分
+
+      // 單詞邊界命中 (前一個字為空格、標點或 @)
+      if (tIdx === 0 || /[\s@#，。、；：\(\)\[\]\-]/.test(tLower[tIdx - 1])) {
+        score += 8;
+      }
+
+      if (!currentRange) {
+        currentRange = [tIdx, tIdx + 1];
+      } else if (currentRange[1] === tIdx) {
+        currentRange[1] = tIdx + 1;
+      } else {
+        ranges.push(currentRange);
+        currentRange = [tIdx, tIdx + 1];
+      }
+    } else {
+      consecutive = 0;
+    }
+  }
+
+  if (currentRange) {
+    ranges.push(currentRange);
+  }
+
+  if (pIdx === pLower.length) {
+    return { match: true, score, ranges };
+  }
+
+  return { match: false, score: 0, ranges: [] };
+}
+
+/**
+ * 對一則訊息物件進行全欄位模糊評分
+ * 欄位包括：內容、發送者、頻道群組、目標標記者名單、匹配理由
+ */
+function scoreMessageForSearch(msg, query) {
+  if (!query) return { isMatch: true, totalScore: 0 };
+
+  const targetStr = (msg.target_users || []).join(' ');
+  const resContent = fuzzyMatch(msg.content, query);
+  const resTarget = fuzzyMatch(targetStr, query);
+  const resSender = fuzzyMatch(msg.sender_name, query);
+  const resChannel = fuzzyMatch(msg.channel_name, query);
+  const resReason = fuzzyMatch(msg.matched_reason, query);
+
+  const isMatch = resContent.match || resTarget.match || resSender.match || resChannel.match || resReason.match;
+  if (!isMatch) return { isMatch: false, totalScore: 0 };
+
+  // 加權計算整體相關度分數
+  const totalScore = (resContent.score * 2.5) +
+                     (resTarget.score * 2.0) +
+                     (resSender.score * 1.5) +
+                     (resChannel.score * 1.2) +
+                     (resReason.score * 1.0);
+
+  return { isMatch: true, totalScore };
+}
+
+/**
+ * 模糊高亮字元渲染
+ */
+function highlightFuzzy(text, query) {
+  if (!text) return '';
+  const plainText = String(text);
+  if (!query) return escapeHtml(plainText);
+
+  const res = fuzzyMatch(plainText, query);
+  if (!res.match || res.ranges.length === 0) {
+    return escapeHtml(plainText);
+  }
+
+  // 合併重疊或相鄰的 range
+  const sorted = [...res.ranges].sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const r of sorted) {
+    if (!merged.length) {
+      merged.push([...r]);
+    } else {
+      const last = merged[merged.length - 1];
+      if (r[0] <= last[1]) {
+        last[1] = Math.max(last[1], r[1]);
+      } else {
+        merged.push([...r]);
+      }
+    }
+  }
+
+  let html = '';
+  let lastIdx = 0;
+  for (const [start, end] of merged) {
+    if (start > lastIdx) {
+      html += escapeHtml(plainText.slice(lastIdx, start));
+    }
+    html += `<mark style="background:#fef08a; color:#854d0e; padding:1px 3px; border-radius:3px; font-weight:600;">${escapeHtml(plainText.slice(start, end))}</mark>`;
+    lastIdx = end;
+  }
+  if (lastIdx < plainText.length) {
+    html += escapeHtml(plainText.slice(lastIdx));
+  }
+  return html;
+}
+
+// ----------------- WebSocket 連線初始化 -----------------
 function initWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${protocol}//${window.location.host}/ws`;
@@ -168,7 +324,6 @@ function initWebSocket() {
 function handleWebSocketMessage(payload) {
   const { type, data } = payload;
   if (type === 'NEW_MESSAGE') {
-    // 檢查是否已存在
     if (!allMessages.some(m => m.id === data.id)) {
       allMessages.unshift(data);
       saveToLocalStorage(allMessages);
@@ -210,9 +365,7 @@ async function fetchMessages() {
     const localMsgs = loadFromLocalStorage();
     const msgMap = new Map();
 
-    // 先存入本地快取
     localMsgs.forEach(m => msgMap.set(m.id, m));
-    // 用伺服器最新資料覆蓋或新增
     serverMessages.forEach(m => msgMap.set(m.id, m));
 
     allMessages = Array.from(msgMap.values());
@@ -239,104 +392,73 @@ async function fetchMessages() {
   }
 }
 
-// 切換交辦頁籤
-function switchMentionTab(tab) {
-  currentMentionTab = tab;
-  if (tab === 'ME') {
-    tabMyMentions.classList.add('active');
-    tabTeamMentions.classList.remove('active');
-  } else {
-    tabTeamMentions.classList.add('active');
-    tabMyMentions.classList.remove('active');
-  }
-  renderMessages();
-}
-
 // 渲染訊息列表
 function renderMessages() {
-  const query = searchInput.value.toLowerCase().trim();
+  const query = searchInput.value.trim();
   const platform = platformFilter.value;
   const hideResolved = unresolvedOnly.checked;
   const selectedDays = timeFilter ? parseInt(timeFilter.value, 10) : 3;
 
   const now = new Date();
 
-  const filtered = allMessages.filter(m => {
+  // 1. 條件過濾與模糊搜尋評分
+  const filteredWithScore = [];
+  for (const m of allMessages) {
     // 時間過濾 (非置頂訊息且選擇特定天數時)
     if (selectedDays > 0 && !m.is_pinned) {
       const msgDate = parseMessageDate(m.created_at);
       const diffDays = (now - msgDate) / (1000 * 60 * 60 * 24);
-      if (diffDays > selectedDays) return false;
+      if (diffDays > selectedDays) continue;
     }
 
-    if (platform !== 'ALL' && m.platform !== platform) return false;
-    if (hideResolved && m.is_resolved) return false;
+    if (platform !== 'ALL' && m.platform !== platform) continue;
+    if (hideResolved && m.is_resolved) continue;
+
     if (query) {
-      const targetStr = (m.target_users || []).join(' ');
-      const matchText = (m.content + m.sender_name + m.channel_name + targetStr).toLowerCase();
-      if (!matchText.includes(query)) return false;
+      const searchRes = scoreMessageForSearch(m, query);
+      if (!searchRes.isMatch) continue;
+      filteredWithScore.push({ msg: m, score: searchRes.totalScore });
+    } else {
+      filteredWithScore.push({ msg: m, score: 0 });
     }
-    return true;
-  });
+  }
 
-  const myMentions = filtered.filter(m => m.category === 'MENTION_ME');
-  const teamMentions = filtered.filter(m => m.category === 'MENTION_TEAM' || m.category === 'MENTION_ME');
+  // 若處於搜尋狀態，依匹配度分數高者排序；否則依置頂與時間排序
+  if (query) {
+    filteredWithScore.sort((a, b) => {
+      if (a.msg.is_pinned !== b.msg.is_pinned) return b.msg.is_pinned ? 1 : -1;
+      if (Math.abs(b.score - a.score) > 0.001) return b.score - a.score;
+      return parseMessageDate(b.msg.created_at) - parseMessageDate(a.msg.created_at);
+    });
+  }
+
+  const filtered = filteredWithScore.map(item => item.msg);
+
+  // 所有交辦事項 (無論 MENTION_TEAM 或 MENTION_ME 均為待處理交辦)
+  const teamMentions = filtered.filter(m => m.category !== 'ANNOUNCEMENT');
   const announcements = filtered.filter(m => m.category === 'ANNOUNCEMENT');
 
-  // 計算頂部徽章總數
-  const totalMyUnresolved = filtered.filter(m => m.category === 'MENTION_ME' && !m.is_resolved).length;
-  const totalTeamUnresolved = filtered.filter(m => m.category === 'MENTION_TEAM' && !m.is_resolved).length;
+  // 計算頂部徽章總數 (未結案交辦與全域宣導)
+  const totalTeamUnresolved = filtered.filter(m => m.category !== 'ANNOUNCEMENT' && !m.is_resolved).length;
   const totalAnnouncements = announcements.length;
 
-  badgeMentions.textContent = totalMyUnresolved;
-  badgeTeam.textContent = totalTeamUnresolved;
-  badgeAnnouncements.textContent = totalAnnouncements;
+  if (badgeTeam) badgeTeam.textContent = totalTeamUnresolved;
+  if (badgeAnnouncements) badgeAnnouncements.textContent = totalAnnouncements;
 
-  countTabMe.textContent = myMentions.length;
-  countTabTeam.textContent = teamMentions.length;
-  countAnnouncements.textContent = `${announcements.length} 則`;
+  if (countMentions) countMentions.textContent = `${teamMentions.length} 則`;
+  if (countAnnouncements) countAnnouncements.textContent = `${announcements.length} 則`;
 
-  // 依當前 Tab 渲染左欄
-  if (currentMentionTab === 'ME') {
-    countMentions.textContent = `${myMentions.length} 則`;
-    renderColumn(listMentions, myMentions, true, false, query, teamMentions.length);
-  } else {
-    countMentions.textContent = `${teamMentions.length} 則`;
-    renderColumn(listMentions, teamMentions, true, true, query, myMentions.length);
-  }
-
-  renderColumn(listAnnouncements, announcements, false, false, query, 0);
+  // 渲染雙欄
+  renderColumn(listMentions, teamMentions, true, query);
+  renderColumn(listAnnouncements, announcements, false, query);
 }
 
-function highlightMatch(text, query) {
-  if (!text) return '';
-  const escapedText = escapeHtml(text);
-  if (!query) return escapedText;
-  const escapedQuery = escapeHtml(query);
-  try {
-    const reg = new RegExp(`(${escapedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-    return escapedText.replace(reg, '<mark style="background:#fef08a; color:#854d0e; padding:1px 3px; border-radius:3px;">$1</mark>');
-  } catch (e) {
-    return escapedText;
-  }
-}
-
-function renderColumn(container, list, isMentionCol, isTeamView, query = '', otherCount = 0) {
+function renderColumn(container, list, isMentionCol, query = '') {
   if (list.length === 0) {
-    if (query && isMentionCol && !isTeamView && otherCount > 0) {
-      container.innerHTML = `
-        <div class="empty-state" style="line-height:1.9; padding:24px 16px;">
-          🔍 搜尋「<strong style="color:#60a5fa;">${escapeHtml(query)}</strong>」在 <em>@我的交辦</em> 無符合項目，<br>
-          但在 <strong>全團隊交辦</strong> 中找到 <strong>${otherCount}</strong> 則相符交辦。<br>
-          <button class="action-btn" onclick="switchMentionTab('TEAM')" style="margin-top:12px; display:inline-block; padding:7px 16px; background:#3b82f6; color:#fff; font-weight:600; border:none; border-radius:6px; cursor:pointer;">
-            👉 立即切換至「全團隊交辦」查看 (${otherCount} 則)
-          </button>
-        </div>
-      `;
-    } else if (query) {
-      container.innerHTML = `<div class="empty-state">未找到與「${escapeHtml(query)}」相符的訊息</div>`;
+    if (query) {
+      container.innerHTML = `<div class="empty-state">未找到與「<strong style="color:#60a5fa;">${escapeHtml(query)}</strong>」相符的訊息</div>`;
     } else {
-      container.innerHTML = `<div class="empty-state">${isMentionCol ? (isTeamView ? '目前無團隊成員交辦訊息' : '目前無屬於您的 @個人 訊息') : '目前無符合條件的宣導或公告事項'}</div>`;
+      container.innerHTML = `<div class="empty-state">${isMentionCol ? '目前無待處理交辦事項' : '目前無符合條件的宣導或公告事項'}</div>`;
     }
     return;
   }
@@ -359,7 +481,7 @@ function renderColumn(container, list, isMentionCol, isTeamView, query = '', oth
     // 目標被標記者標籤
     let targetBadges = '';
     if (msg.target_users && msg.target_users.length > 0) {
-      targetBadges = msg.target_users.map(u => `<span class="target-user-badge">@${highlightMatch(u, query)}</span>`).join(' ');
+      targetBadges = msg.target_users.map(u => `<span class="target-user-badge">@${highlightFuzzy(u, query)}</span>`).join(' ');
     }
 
     const cardClasses = [
@@ -381,14 +503,14 @@ function renderColumn(container, list, isMentionCol, isTeamView, query = '', oth
         </div>
 
         <div class="meta-info">
-          <span class="channel-tag">${highlightMatch(msg.channel_name, query)}</span>
+          <span class="channel-tag">${highlightFuzzy(msg.channel_name, query)}</span>
           <span>&bull;</span>
-          <span class="sender-tag">${highlightMatch(msg.sender_name, query)}</span>
+          <span class="sender-tag">${highlightFuzzy(msg.sender_name, query)}</span>
         </div>
 
-        <div class="msg-content">${highlightMatch(msg.content, query)}</div>
+        <div class="msg-content">${highlightFuzzy(msg.content, query)}</div>
 
-        ${msg.matched_reason ? `<div class="matched-reason-bar">${escapeHtml(msg.matched_reason)}</div>` : ''}
+        ${msg.matched_reason ? `<div class="matched-reason-bar">${highlightFuzzy(msg.matched_reason, query)}</div>` : ''}
 
         <div class="card-actions">
           ${isMentionCol ? `
@@ -452,7 +574,7 @@ function applyTemplate(type) {
   if (type === 1) {
     channel.value = "半導體架構技術交流群";
     sender.value = "系統架構師 Kevin";
-    content.value = "@Alex 請於今日下班前確認 API 規格書與佈告欄原型驗證，謝謝！";
+    content.value = "@國賓 請確認英業達分子篩更換發包進度，謝謝！";
   } else if (type === 5) {
     channel.value = "後端開發小組";
     sender.value = "產品經理 Sarah";
@@ -495,7 +617,7 @@ btnSendSimulate.onclick = async () => {
     resultBox.style.display = 'block';
     if (data.captured) {
       resultBox.style.borderLeftColor = '#22c55e';
-      const catName = data.message.category === 'MENTION_ME' ? '📥 @我的交辦' : (data.message.category === 'MENTION_TEAM' ? '👥 全團隊交辦' : '📢 全域宣導');
+      const catName = data.message.category === 'ANNOUNCEMENT' ? '📢 全域宣導' : '👥 團隊交辦事項';
       resultBox.innerHTML = `✅ <strong>成功擷取並分流！</strong> 分類：<code>${catName}</code> (${data.message.matched_reason})`;
     } else {
       resultBox.style.borderLeftColor = '#eab308';
@@ -508,18 +630,14 @@ btnSendSimulate.onclick = async () => {
   }
 };
 
-// 設定相關
+// ----------------- 設定相關邏輯 -----------------
 function applyConfigToForm(cfg) {
   if (!cfg) return;
   const user = cfg.user_profile || {};
-  const elName = document.getElementById('cfg-name');
-  const elAliases = document.getElementById('cfg-aliases');
   const elLineIds = document.getElementById('cfg-line-ids');
   const elGoogleEmails = document.getElementById('cfg-google-emails');
   const elAnnKeywords = document.getElementById('cfg-ann-keywords');
 
-  if (elName) elName.value = user.name || '';
-  if (elAliases) elAliases.value = (user.aliases || []).join(', ');
   if (elLineIds) elLineIds.value = (user.line_user_ids || []).join(', ');
   if (elGoogleEmails) elGoogleEmails.value = (user.google_emails || []).join(', ');
   if (elAnnKeywords) {
@@ -551,49 +669,34 @@ async function syncConfigToServer(cfg) {
 }
 
 async function loadSettings() {
-  // 1. 優先從本地 LocalStorage 帶入自訂設定
   const localCfg = loadConfigFromLocalStorage();
   if (localCfg) {
     applyConfigToForm(localCfg);
     currentConfig = localCfg;
   }
 
-  // 2. 向伺服器確認最新設定
   try {
     const res = await fetch('/api/config');
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const serverCfg = await res.json();
-    const serverUser = serverCfg.user_profile || {};
-
-    // 若伺服器為未修改預設 (Alex) 且本地有自訂設定，自動將本地設定補發至伺服器
-    const isServerDefault = (!serverUser.name || serverUser.name === 'Alex');
-    if (isServerDefault && localCfg && localCfg.is_customized) {
-      console.log("偵測到伺服器為預設設定，自動同步本地自訂身分至伺服器...");
-      applyConfigToForm(localCfg);
-      await syncConfigToServer(localCfg);
-    } else {
-      // 否則以伺服器設定為準並更新本地快取
-      currentConfig = serverCfg;
-      applyConfigToForm(serverCfg);
-      saveConfigToLocalStorage(serverCfg);
-    }
+    currentConfig = serverCfg;
+    applyConfigToForm(serverCfg);
+    saveConfigToLocalStorage(serverCfg);
   } catch (err) {
     console.warn("Load config from server failed, using local cache:", err);
   }
 }
 
 btnSaveSettings.onclick = async () => {
-  const name = document.getElementById('cfg-name').value.trim();
-  const aliases = document.getElementById('cfg-aliases').value.split(',').map(s => s.trim()).filter(Boolean);
-  const line_user_ids = document.getElementById('cfg-line-ids').value.split(',').map(s => s.trim()).filter(Boolean);
-  const google_emails = document.getElementById('cfg-google-emails').value.split(',').map(s => s.trim()).filter(Boolean);
-  const announcement_keywords = document.getElementById('cfg-ann-keywords').value.split(',').map(s => s.trim()).filter(Boolean);
+  const line_user_ids = (document.getElementById('cfg-line-ids')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+  const google_emails = (document.getElementById('cfg-google-emails')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
+  const announcement_keywords = (document.getElementById('cfg-ann-keywords')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
 
   const payload = {
     is_customized: true,
     user_profile: {
-      name,
-      aliases,
+      name: "",
+      aliases: [],
       line_user_ids,
       google_emails
     },
@@ -602,17 +705,14 @@ btnSaveSettings.onclick = async () => {
     }
   };
 
-  // 1. 立即持久化至本地 LocalStorage (重整永不遺失)
   saveConfigToLocalStorage(payload);
   currentConfig = payload;
 
-  // 2. 發送至後端儲存
   try {
     const ok = await syncConfigToServer(payload);
     if (ok) {
       alert("設定已成功儲存並同步！");
       settingsModal.classList.remove('active');
-      // 觸發伺服器重新校準歷史訊息歸屬並刷新
       try {
         await fetch('/api/messages/reclassify', { method: 'POST' });
         await fetchMessages();
@@ -642,44 +742,11 @@ btnOpenSettings.onclick = () => {
 btnCloseSettings.onclick = () => settingsModal.classList.remove('active');
 btnCancelSettings.onclick = () => settingsModal.classList.remove('active');
 
-// 智慧搜尋分頁引導與切換
-function handleSearchInput() {
-  const query = searchInput.value.toLowerCase().trim();
-  if (query && currentMentionTab === 'ME') {
-    const selectedDays = timeFilter ? parseInt(timeFilter.value, 10) : 3;
-    const now = new Date();
-
-    const matchesMe = allMessages.some(m => {
-      if (selectedDays > 0 && !m.is_pinned) {
-        if ((now - parseMessageDate(m.created_at)) / (1000 * 60 * 60 * 24) > selectedDays) return false;
-      }
-      if (platformFilter.value !== 'ALL' && m.platform !== platformFilter.value) return false;
-      if (unresolvedOnly.checked && m.is_resolved) return false;
-      const targetStr = (m.target_users || []).join(' ');
-      return (m.content + m.sender_name + m.channel_name + targetStr).toLowerCase().includes(query) && m.category === 'MENTION_ME';
-    });
-
-    const matchesTeam = allMessages.some(m => {
-      if (selectedDays > 0 && !m.is_pinned) {
-        if ((now - parseMessageDate(m.created_at)) / (1000 * 60 * 60 * 24) > selectedDays) return false;
-      }
-      if (platformFilter.value !== 'ALL' && m.platform !== platformFilter.value) return false;
-      if (unresolvedOnly.checked && m.is_resolved) return false;
-      const targetStr = (m.target_users || []).join(' ');
-      return (m.content + m.sender_name + m.channel_name + targetStr).toLowerCase().includes(query) && (m.category === 'MENTION_TEAM' || m.category === 'MENTION_ME');
-    });
-
-    // 若 @我的交辦 無結果，但 全團隊交辦 有結果，自動切換至 全團隊交辦
-    if (!matchesMe && matchesTeam) {
-      switchMentionTab('TEAM');
-      return;
-    }
-  }
+// 搜尋輸入監聽
+searchInput.oninput = () => {
   renderMessages();
-}
+};
 
-// 事件監聽
-searchInput.oninput = handleSearchInput;
 if (timeFilter) timeFilter.onchange = fetchMessages;
 platformFilter.onchange = renderMessages;
 unresolvedOnly.onchange = renderMessages;
@@ -692,20 +759,18 @@ function escapeHtml(str) {
 
 // 頁面初次載入
 window.onload = () => {
-  // 先載入本地快取快速呈現訊息
   allMessages = loadFromLocalStorage();
   if (allMessages.length > 0) {
     renderMessages();
   }
 
-  // 靜默載入/檢查本地自訂設定，確保與伺服器雙向同步
   const localCfg = loadConfigFromLocalStorage();
   if (localCfg && localCfg.is_customized) {
     currentConfig = localCfg;
     syncConfigToServer(localCfg);
   }
 
-  // 抓取伺服器最新資料並初始化 WebSocket
   fetchMessages();
   initWebSocket();
 };
+

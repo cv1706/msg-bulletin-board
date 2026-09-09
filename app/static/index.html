@@ -26,12 +26,8 @@
       </div>
 
       <div class="header-stats">
-        <div class="stat-pill mention-stat">
-          <span class="stat-label">待處理 @我：</span>
-          <span class="stat-value" id="badge-mentions">0</span>
-        </div>
         <div class="stat-pill team-stat">
-          <span class="stat-label">團隊交辦：</span>
+          <span class="stat-label">待處理交辦：</span>
           <span class="stat-value" id="badge-team">0</span>
         </div>
         <div class="stat-pill announcement-stat">
@@ -60,7 +56,7 @@
     <div class="filter-bar">
       <div class="search-box">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-        <input type="text" id="search-input" placeholder="搜尋交辦內容、被標記者、發送者或群組...">
+        <input type="text" id="search-input" placeholder="模糊搜尋交辦內容、被標記者、發送者或群組 (支援多關鍵字)...">
       </div>
 
       <div class="filter-options">
@@ -90,22 +86,20 @@
 
     <!-- 主內容雙欄區塊 -->
     <main class="dashboard-grid">
-      <!-- 左欄：交辦專區（支援 @我 / @全團隊 雙頁籤切換） -->
+      <!-- 左欄：待處理交辦專區 -->
       <section class="board-column column-mentions">
-        <div class="column-header-with-tabs">
-          <div class="tab-group">
-            <button class="tab-btn active" id="tab-my-mentions" onclick="switchMentionTab('ME')">
-              📥 @我的交辦 (<span id="count-tab-me">0</span>)
-            </button>
-            <button class="tab-btn" id="tab-team-mentions" onclick="switchMentionTab('TEAM')">
-              👥 全團隊交辦 (<span id="count-tab-team">0</span>)
-            </button>
+        <div class="column-header">
+          <div class="column-title">
+            <div class="column-icon mention-color">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><polyline points="17 11 19 13 23 9"></polyline></svg>
+            </div>
+            <h2>👥 待處理交辦事項</h2>
           </div>
           <span class="column-counter" id="count-mentions">0 則</span>
         </div>
         
         <div class="message-list" id="list-mentions">
-          <div class="empty-state">目前無待處理訊息</div>
+          <div class="empty-state">目前無待處理交辦事項</div>
         </div>
       </section>
 
@@ -136,7 +130,7 @@
         <button class="modal-close" id="btn-close-simulate">&times;</button>
       </div>
       <div class="modal-body">
-        <p class="modal-hint">可在此模擬發送 LINE 或 Google Chat 訊息，驗證「@我」、「@團隊其他同事」與「宣導公告」的分流效果。</p>
+        <p class="modal-hint">可在此模擬發送 LINE 或 Google Chat 訊息，驗證「@成員交辦」與「宣導公告」的分流效果。</p>
         
         <div class="form-group">
           <label>通訊平台</label>
@@ -165,13 +159,13 @@
 
         <div class="form-group">
           <label>訊息內容</label>
-          <textarea id="sim-content" class="form-textarea" rows="3">@Alex 請於今日下班前確認 API 規格書與佈告欄原型驗證！</textarea>
+          <textarea id="sim-content" class="form-textarea" rows="3">@國賓 請確認英業達分子篩更換發包進度。</textarea>
         </div>
 
         <div class="quick-templates">
           <span class="template-label">快速套用範例：</span>
-          <button type="button" class="badge-btn" onclick="applyTemplate(1)">@我 (個人交辦)</button>
-          <button type="button" class="badge-btn" onclick="applyTemplate(5)">@其他同事 (團隊交辦)</button>
+          <button type="button" class="badge-btn" onclick="applyTemplate(1)">@成員 (團隊交辦)</button>
+          <button type="button" class="badge-btn" onclick="applyTemplate(5)">@多位成員 (多重交辦)</button>
           <button type="button" class="badge-btn" onclick="applyTemplate(2)">【公告】系統維護</button>
           <button type="button" class="badge-btn" onclick="applyTemplate(3)">@all 宣導事項</button>
           <button type="button" class="badge-btn" onclick="applyTemplate(4)">一般群組閒聊</button>
@@ -190,21 +184,10 @@
   <div class="modal-overlay" id="settings-modal">
     <div class="modal-card">
       <div class="modal-header">
-        <h3>⚙️ 個人身分與篩選規則設定</h3>
+        <h3>⚙️ 系統篩選規則設定</h3>
         <button class="modal-close" id="btn-close-settings">&times;</button>
       </div>
       <div class="modal-body">
-        <div class="form-group">
-          <label>個人主要顯示名稱 (當訊息中包含 @此名稱 即歸類為「@我的交辦」)</label>
-          <input type="text" id="cfg-name" class="form-input" placeholder="例如：Alex">
-        </div>
-
-        <div class="form-group">
-          <label>個人暱稱 / 標記別名 (以逗號分隔)</label>
-          <input type="text" id="cfg-aliases" class="form-input" placeholder="例如：Alex, 王大明, 大明, alex.wang">
-          <span class="form-hint">訊息內 @上述任一別名 會進入「@我的交辦」；@其他名字 則進入「全團隊交辦」</span>
-        </div>
-
         <div class="form-group">
           <label>LINE User ID 清單 (以逗號分隔)</label>
           <input type="text" id="cfg-line-ids" class="form-input" placeholder="例如：U1234567890abcdef...">
@@ -217,7 +200,7 @@
 
         <div class="form-group">
           <label>全域宣導關鍵字 (以逗號分隔)</label>
-          <textarea id="cfg-ann-keywords" class="form-textarea" rows="2"></textarea>
+          <textarea id="cfg-ann-keywords" class="form-textarea" rows="3"></textarea>
         </div>
       </div>
       <div class="modal-footer">

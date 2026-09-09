@@ -1,9 +1,9 @@
 {
   "user_profile": {
-    "name": "Alex",
-    "aliases": ["Alex", "王大明", "大明", "alex.wang"],
-    "line_user_ids": ["U1234567890abcdef1234567890abcdef"],
-    "google_emails": ["alex.wang@company.com", "alex@example.com"]
+    "name": "",
+    "aliases": [],
+    "line_user_ids": [],
+    "google_emails": []
   },
   "announcement_rules": {
     "keywords": [

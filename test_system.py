@@ -25,22 +25,22 @@ class TestBulletinSystem(unittest.TestCase):
         clear_all_messages()
         clear_all_settings()
 
-    def test_01_mention_me_classification(self):
-        """測試 @個人 訊息與暱稱比對"""
-        text = "@Alex 請於今日下午五點前交付架構報告"
+    def test_01_mention_classification(self):
+        """測試 @人員 訊息辨識"""
+        text = "@國賓 請確認英業達分子篩更換發包進度"
         msg = MessageClassifier.classify_text(
             text=text,
             sender="主管",
             channel="核心開發組",
             platform=PlatformType.LINE
         )
-        self.assertIsNotNone(msg, "應成功識別 @個人 訊息")
-        self.assertEqual(msg.category, MessageCategory.MENTION_ME)
-        self.assertIn("alex", msg.matched_reason.lower())
-        print("[PASS] 測試 1：成功識別 @我的交辦 訊息")
+        self.assertIsNotNone(msg, "應成功識別交辦訊息")
+        self.assertEqual(msg.category, MessageCategory.MENTION_TEAM)
+        self.assertIn("國賓", msg.target_users)
+        print("[PASS] 測試 1：成功識別交辦訊息並抽取目標人員")
 
     def test_02_mention_team_classification(self):
-        """測試 @其他同事 進入全團隊交辦"""
+        """測試 @多位同事 進入團隊交辦"""
         text = "@David @Jessica 請排查伺服器連線延遲問題"
         msg = MessageClassifier.classify_text(
             text=text,
@@ -92,7 +92,7 @@ class TestBulletinSystem(unittest.TestCase):
                     },
                     "message": {
                         "type": "text",
-                        "text": "請大家注意，@Alex 這個項目需要你支援！",
+                        "text": "請大家注意，@國賓 這個項目需要你支援！",
                         "mention": {
                             "mentionees": [
                                 {
@@ -108,7 +108,7 @@ class TestBulletinSystem(unittest.TestCase):
         }
         messages = MessageClassifier.parse_line_webhook(line_payload)
         self.assertEqual(len(messages), 1)
-        self.assertEqual(messages[0].category, MessageCategory.MENTION_ME)
+        self.assertEqual(messages[0].category, MessageCategory.MENTION_TEAM)
         print("[PASS] 測試 5：LINE Webhook 事件精確解析成功")
 
     def test_06_taipei_timezone_conversion(self):
