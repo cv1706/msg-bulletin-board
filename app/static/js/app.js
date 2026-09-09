@@ -635,11 +635,9 @@ function applyConfigToForm(cfg) {
   if (!cfg) return;
   const user = cfg.user_profile || {};
   const elLineIds = document.getElementById('cfg-line-ids');
-  const elGoogleEmails = document.getElementById('cfg-google-emails');
   const elAnnKeywords = document.getElementById('cfg-ann-keywords');
 
   if (elLineIds) elLineIds.value = (user.line_user_ids || []).join(', ');
-  if (elGoogleEmails) elGoogleEmails.value = (user.google_emails || []).join(', ');
   if (elAnnKeywords) {
     const kw = cfg.announcement_rules?.keywords || [];
     elAnnKeywords.value = kw.join(', ');
@@ -689,7 +687,6 @@ async function loadSettings() {
 
 btnSaveSettings.onclick = async () => {
   const line_user_ids = (document.getElementById('cfg-line-ids')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
-  const google_emails = (document.getElementById('cfg-google-emails')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
   const announcement_keywords = (document.getElementById('cfg-ann-keywords')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
 
   const payload = {
@@ -698,7 +695,7 @@ btnSaveSettings.onclick = async () => {
       name: "",
       aliases: [],
       line_user_ids,
-      google_emails
+      google_emails: []
     },
     announcement_rules: {
       keywords: announcement_keywords
